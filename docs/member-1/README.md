@@ -149,6 +149,10 @@ gcc (Debian 16.2.0-3) 16.2.0
 
 The successful version output confirms that the C compiler required for developing the ECU simulator programs is installed and available.
 
+![GCC Version Verification](screenshots/step-02-gcc-version.png)
+
+**Screenshot 3:** Terminal showing the installed GCC version and confirming the C compiler is available.
+
 ### Step 2.4: Verify the CAN Utilities
 
 Next, verify that the `candump` utility provided by the **can-utils** package is available:
@@ -160,10 +164,6 @@ candump --help
 On this system, `candump` reports an invalid option for `--help` and subsequently displays its usage information and available options. This confirms that the `candump` utility is installed correctly and can be executed from the terminal.
 
 The `candump` utility will later be used to monitor CAN frames transmitted through the `vcan0` virtual CAN interface.
-
-![GCC Version Verification](screenshots/step-02-gcc-version.png)
-
-**Screenshot 3:** Terminal showing the installed GCC version and confirming the C compiler is available.
 
 ![candump Usage Output](screenshots/step-02-candump-help.png)
 
@@ -240,8 +240,190 @@ The output confirms that:
 
 **Screenshot 5:** Terminal showing the `vcan0` interface configuration and verification using `ip link show vcan0`.
 
+### Step 3.5: `vcan0` Persistence and Recreation
+
+The `vcan0` virtual CAN interface is created at runtime and is **not persistent by default**. Therefore, the interface will normally disappear when the Kali Linux virtual machine is rebooted. It can also be removed if the interface is manually deleted.
+
+The following command creates the `vcan0` interface:
+
+```bash
+sudo ip link add dev vcan0 type vcan
+```
+
+This creates the virtual CAN interface only for the current running Linux session. Linux does not automatically recreate the interface after a system reboot.
+
+### Recreate `vcan0` After Reboot
+
+For the CAN-Sentinel development environment, this behavior is not a problem. If the `vcan0` interface is no longer available after restarting the Kali Linux virtual machine, it can be recreated manually using:
+
+```bash
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+```
+
+After executing these commands, the `vcan0` interface will be available again for CAN-Sentinel development and testing.
+
+### Optional: Automatic Recreation After Reboot
+
+The `vcan0` interface can also be configured to be **automatically recreated during system startup**. This avoids manually creating the interface after every Kali Linux reboot.
+
+For CAN-Sentinel, this can be implemented using a **systemd service**. The service can load the `vcan` kernel module, create the `vcan0` interface, and bring it up automatically during system boot.
+
+The service can execute the following commands:
+
+```bash
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+```
+
+Once the corresponding systemd service has been created, it can be enabled to start automatically during boot:
+
+```bash
+sudo systemctl enable vcan0.service
+```
+
+After the Kali Linux virtual machine is restarted, the systemd service can automatically recreate and activate the `vcan0` interface.
+
+**Note:** Automatic recreation is optional for the CAN-Sentinel development environment. The interface can also be recreated manually whenever required.
+
 ### Step 3 Completion
 
 The **`vcan` kernel module** has been loaded successfully, and the **`vcan0` virtual CAN interface** has been created and brought up.
 
 The SocketCAN virtual CAN environment is now ready for the next stage of the CAN-Sentinel Member 1 implementation: **developing the C-based ECU simulator programs and generating CAN traffic through `vcan0`**.
+
+## Step 4: Verify the Virtual CAN Interface Details
+
+After creating and enabling the `vcan0` virtual CAN interface, its detailed configuration was verified to ensure that the interface is correctly recognized and configured by the Linux SocketCAN framework.
+
+Two verification commands were used. The first command displays detailed configuration information for `vcan0`, while the second specifically identifies interfaces using the Virtual CAN (`vcan`) driver.
+
+### Step 4.1: Display Detailed `vcan0` Configuration
+
+First, display the detailed configuration of the `vcan0` interface:
+
+```bash
+ip -details link show vcan0
+```
+
+This command provides detailed information about the network interface, including its interface state, CAN link type, queue configuration, and Virtual CAN driver parameters.
+
+The command produced the following output:
+
+```text
+3: vcan0: <NOARP,UP,LOWER_UP> mtu 2060 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/can promiscuity 0 allmulti 0 minmtu 0 maxmtu 0
+    vcan addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535 tso_max_size 65535 tso_max_segs 65535 gro_max_size 65536 gso_ipv4_max_size 65536 gro_ipv4_max_size 65536
+```
+
+The output shows that the interface is using the **CAN link type** and the **`vcan` driver**. The `UP` state confirms that the interface is enabled and available for CAN communication.
+
+![Detailed vcan0 Interface Configuration](screenshots/step-04-vcan0-details.png)
+
+**Screenshot 6:** Detailed `vcan0` interface configuration displayed using `ip -details link show vcan0`.
+### Step 4.2: Verify the Virtual CAN Interface Type
+
+Next, verify all interfaces recognized specifically as Virtual CAN interfaces:
+
+```bash
+ip link show type vcan
+```
+
+The command produced the following output:
+
+```text
+3: vcan0: <NOARP,UP,LOWER_UP> mtu 2060 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/can
+```
+
+This confirms that `vcan0` is recognized by Linux as a **Virtual CAN (`vcan`) interface**.
+
+![Virtual CAN Interface Verification](screenshots/step-04-vcan0-type.png)
+
+**Screenshot 7:** Virtual CAN interface verification using `ip link show type vcan`.
+
+### Step 4 Completion
+
+The `vcan0` interface has been successfully verified using both detailed interface information and Virtual CAN type filtering.
+
+The verification confirms that:
+
+* **`vcan0` exists** and is active.
+* The interface is in the **UP** state.
+* Linux recognizes `vcan0` as a **Virtual CAN (`vcan`) interface**.
+* The interface is ready for **CAN frame transmission and reception**.
+* The SocketCAN virtual CAN environment is correctly configured for the next stage of CAN-Sentinel development.
+
+## Step 5: Test CAN Communication
+
+After creating and verifying the `vcan0` virtual CAN interface, the next step is to test whether the interface can successfully **transmit and receive CAN frames**.
+
+The CAN communication test uses two Kali Linux terminals. One terminal monitors CAN traffic using `candump`, while the second terminal transmits a test CAN frame using `cansend`.
+
+Successful reception of the transmitted frame confirms that the `vcan0` virtual CAN interface is operational and that CAN communication is functioning correctly.
+
+### Step 5.1: Start CAN Traffic Monitoring
+
+Open a Kali Linux terminal and start monitoring CAN traffic on the `vcan0` interface:
+
+```bash
+candump vcan0
+```
+
+Leave this command running in the first terminal.
+
+The `candump` utility continuously listens for CAN frames received through the specified interface and displays them in the terminal.
+
+### Step 5.2: Transmit a Test CAN Frame
+
+Open a second Kali Linux terminal and transmit a test CAN frame using:
+
+```bash
+cansend vcan0 123#1122334455667788
+```
+
+The `cansend` utility transmits the specified CAN frame through the `vcan0` interface.
+
+The test frame uses:
+
+* **CAN ID:** `0x123`
+* **Data Length:** 8 bytes
+* **Data:** `11 22 33 44 55 66 77 88`
+
+The command completed successfully without displaying an error.
+
+### Step 5.3: Verify the Received CAN Frame
+
+The transmitted frame was successfully received in the first terminal running `candump vcan0`.
+
+The received output was:
+
+```text
+vcan0  123   [8]  11 22 33 44 55 66 77 88
+```
+
+The output confirms that the CAN frame transmitted from the second terminal was received correctly by the `vcan0` interface.
+
+![CAN Frame Reception](screenshots/step-05-candump-reception.png)
+
+**Screenshot 8:** Terminal 1 showing the received CAN frame using `candump vcan0`.
+
+![CAN Frame Transmission](screenshots/step-05-cansend-transmission.png)
+
+**Screenshot 9:** Terminal 2 showing the `cansend` command used to transmit the test CAN frame.
+
+### Step 5 Completion
+
+The `vcan0` virtual CAN interface successfully transmitted and received a test CAN frame.
+
+The communication test confirms that:
+
+* The **`vcan0` interface is operational**.
+* A CAN frame with **CAN ID `0x123`** was transmitted successfully.
+* The frame contained **8 data bytes**.
+* The transmitted data `11 22 33 44 55 66 77 88` was received correctly.
+* CAN communication through the **SocketCAN virtual CAN interface** was successfully verified.
+
+The `vcan0` interface is now ready for the next stage of the CAN-Sentinel Member 1 implementation, where the **C-based ECU simulator programs** will be developed and used to generate CAN traffic.
