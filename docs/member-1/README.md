@@ -427,3 +427,306 @@ The communication test confirms that:
 * CAN communication through the **SocketCAN virtual CAN interface** was successfully verified.
 
 The `vcan0` interface is now ready for the next stage of the CAN-Sentinel Member 1 implementation, where the **C-based ECU simulator programs** will be developed and used to generate CAN traffic.
+
+## Step 6: Create the ECU Simulator Directory
+
+After successfully testing CAN communication through the `vcan0` virtual CAN interface, the next step is to create a dedicated directory for the **C-based Electronic Control Unit (ECU) simulator programs**.
+
+This directory will organize the source code and compiled executables developed for the CAN-Sentinel Member 1 module. The ECU simulators will later generate CAN frames representing vehicle subsystem data and transmit them through the `vcan0` interface.
+
+### Step 6.1: Create the ECU Simulator Directory
+
+First, create the directory for the ECU simulator programs:
+
+```bash
+mkdir -p ~/CAN-Sentinel/ecu-simulator
+```
+
+The `mkdir -p` command creates the specified directory and any required parent directories. If the directory already exists, the command does not report an error.
+
+### Step 6.2: Navigate to the Directory
+
+Move into the newly created ECU simulator directory:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+```
+
+This command changes the current working directory to the location where the ECU simulator source files and compiled programs will be stored.
+
+### Step 6.3: Verify the Current Working Directory
+
+Verify that the terminal is located in the correct directory:
+
+```bash
+pwd
+```
+
+The command produced the following output:
+
+```text
+/home/kali/CAN-Sentinel/ecu-simulator
+```
+
+This confirms that the current working directory is the ECU simulator directory created for the CAN-Sentinel project.
+
+### Step 6.4: Verify the Directory Contents
+
+List all files, including hidden entries, to verify the initial state of the directory:
+
+```bash
+ls -la
+```
+
+The command produced the following output:
+
+```text
+total 8
+drwxrwxr-x 2 kali kali 4096 Oct  9 01:39 .
+drwxrwxr-x 3 kali kali 4096 Oct  9 01:39 ..
+```
+
+The output shows that the directory contains no source files or compiled executables at this stage. The `.` entry represents the current directory, while `..` represents its parent directory.
+
+![ECU Simulator Directory Verification](screenshots/step-06-ecu-simulator-directory.png)
+
+**Screenshot 10:** Terminal showing the ECU simulator directory creation, working directory verification using `pwd`, and initial directory listing using `ls -la`.
+
+### Step 6 Completion
+
+The `ecu-simulator` directory has been successfully created at:
+
+`/home/kali/CAN-Sentinel/ecu-simulator`
+
+The working directory and its initial contents have been verified. This directory is now ready to store the **C source files and compiled executables** required for ECU simulation and CAN traffic generation in the CAN-Sentinel project.
+
+## Step 7: Create the Six-ECU Simulator Source File
+
+After creating the ECU simulator directory, the next step is to create the initial C source file for the **six-ECU simulator** in the CAN-Sentinel project.
+
+The program defines six vehicle Electronic Control Units (ECUs), each with an assigned CAN identifier and an initial parameter value. These ECUs represent the engine RPM, vehicle speed, engine temperature, brake pressure, steering angle, and infotainment system.
+
+At this stage, the program displays the ECU information in the terminal. CAN frame transmission and dynamic ECU simulation will be implemented in subsequent steps.
+
+### Step 7.1: Navigate to the ECU Simulator Directory
+
+First, navigate to the directory created in Step 6:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+```
+
+This ensures that the source file is created in the correct location.
+
+### Step 7.2: Create the C Source File
+
+Open the Nano text editor to create the C source file:
+
+```bash
+nano ecu_simulator.c
+```
+
+Enter the following initial program:
+
+```c
+#include <stdio.h>
+#include <unistd.h>
+
+int main(void)
+{
+    int rpm = 1500;
+    int speed = 60;
+    int temperature = 90;
+    int brake_pressure = 50;
+    int steering_angle = 0;
+    int infotainment_status = 1;
+
+    printf("CAN-Sentinel ECU Simulator Started\n\n");
+
+    printf("Engine RPM ECU (CAN ID: 0x100)\n");
+    printf("Engine RPM: %d\n\n", rpm);
+
+    printf("Speed ECU (CAN ID: 0x200)\n");
+    printf("Vehicle Speed: %d km/h\n\n", speed);
+
+    printf("Temperature ECU (CAN ID: 0x300)\n");
+    printf("Engine Temperature: %d C\n\n", temperature);
+
+    printf("Brake ECU (CAN ID: 0x400)\n");
+    printf("Brake Pressure: %d\n\n", brake_pressure);
+
+    printf("Steering ECU (CAN ID: 0x500)\n");
+    printf("Steering Angle: %d degrees\n\n", steering_angle);
+
+    printf("Infotainment ECU (CAN ID: 0x600)\n");
+    printf("System Status: %d\n", infotainment_status);
+
+    return 0;
+}
+```
+
+The program includes the standard input/output header for terminal output and the `unistd.h` header for POSIX functions that may be used in later development.
+
+The initial ECU parameters and assigned CAN IDs are summarized below:
+
+| ECU              | CAN ID  | Parameter          | Initial Value |
+| ---------------- | ------- | ------------------ | ------------- |
+| Engine RPM ECU   | `0x100` | Engine RPM         | 1500 RPM      |
+| Speed ECU        | `0x200` | Vehicle Speed      | 60 km/h       |
+| Temperature ECU  | `0x300` | Engine Temperature | 90 °C         |
+| Brake ECU        | `0x400` | Brake Pressure     | 50            |
+| Steering ECU     | `0x500` | Steering Angle     | 0 degrees     |
+| Infotainment ECU | `0x600` | System Status      | 1             |
+
+To save the file and exit Nano:
+
+1. Press **Ctrl + O** to save the file.
+2. Press **Enter** to confirm the filename.
+3. Press **Ctrl + X** to exit the editor.
+
+### Step 7.3: Verify the Source File
+
+After saving the program, verify that the source file exists:
+
+```bash
+ls -l
+```
+
+The command produced the following output:
+
+```text
+total 4
+-rw-rw-r-- 1 kali kali 887 Oct  9 01:50 ecu_simulator.c
+```
+
+This confirms that `ecu_simulator.c` was created in the ECU simulator directory.
+
+### Step 7.4: Display and Verify the Source Code
+
+Display the saved source code in the terminal:
+
+```bash
+cat ecu_simulator.c
+```
+
+The displayed source code was verified against the initial six-ECU program entered in Step 7. It contains the six ECU parameter variables, their assigned CAN IDs, and the corresponding `printf()` statements.
+
+This verification ensures that the source file was saved and is ready for compilation in a subsequent step.
+
+![Six-ECU Simulator Source File Verification](screenshots/step-07-ecu-simulator-source.png)
+
+**Screenshot 11:** Terminal showing the `ecu_simulator.c` file listing and its saved source code.
+
+### Step 7 Completion
+
+The initial `ecu_simulator.c` source file has been created and verified successfully.
+
+The program defines the initial parameters and CAN IDs for all six ECUs in the CAN-Sentinel project.
+
+**Note:** This version only displays ECU information in the terminal. It does not yet transmit CAN frames through `vcan0`. CAN frame transmission and dynamic ECU simulation will be implemented in subsequent steps.
+
+## Step 8: Compile and Run the ECU Simulator
+
+After creating and verifying the `ecu_simulator.c` source file, the next step is to compile the program using **GCC** and verify that it executes successfully.
+
+The compiler is invoked with the `-Wall` and `-Wextra` flags to enable additional compiler warnings. This helps identify potential issues in the source code during development. After compilation, the generated executable is verified and run to confirm that the initial parameters for all six ECUs are displayed correctly.
+
+### Step 8.1: Navigate to the ECU Simulator Directory
+
+First, navigate to the directory containing the C source file:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+```
+
+This ensures that the compilation command is executed from the correct project directory.
+
+### Step 8.2: Compile the C Source File
+
+Compile the ECU simulator using GCC:
+
+```bash
+gcc -Wall -Wextra -o ecu_simulator ecu_simulator.c
+```
+
+The command uses the following options:
+
+* **`-Wall`** — Enables a broad set of common compiler warnings.
+* **`-Wextra`** — Enables additional compiler warnings.
+* **`-o ecu_simulator`** — Specifies the name of the generated executable.
+* **`ecu_simulator.c`** — Specifies the C source file to compile.
+
+The compilation completed without displaying any warnings or errors, indicating that the source code compiled successfully.
+
+### Step 8.3: Verify the Compiled Executable
+
+After compilation, verify that the executable was created:
+
+```bash
+ls -l
+```
+
+The command produced the following output:
+
+```text
+total 20
+-rwxrwxr-x 1 kali kali 16008 Oct  9 01:54 ecu_simulator
+-rw-rw-r-- 1 kali kali   887 Oct  9 01:50 ecu_simulator.c
+```
+
+The output confirms that both `ecu_simulator.c` and the compiled `ecu_simulator` executable are present in the directory.
+
+The executable permissions shown for `ecu_simulator` indicate that the program can be run directly from the terminal.
+
+### Step 8.4: Run the ECU Simulator
+
+Execute the compiled program:
+
+```bash
+./ecu_simulator
+```
+
+The program produced the following output:
+
+```text
+CAN-Sentinel ECU Simulator Started
+
+Engine RPM ECU (CAN ID: 0x100)
+Engine RPM: 1500
+
+Speed ECU (CAN ID: 0x200)
+Vehicle Speed: 60 km/h
+
+Temperature ECU (CAN ID: 0x300)
+Engine Temperature: 90 C
+
+Brake ECU (CAN ID: 0x400)
+Brake Pressure: 50
+
+Steering ECU (CAN ID: 0x500)
+Steering Angle: 0 degrees
+
+Infotainment ECU (CAN ID: 0x600)
+System Status: 1
+```
+
+The output confirms that the program starts successfully and displays the initial parameters associated with all six ECUs:
+
+* **Engine RPM ECU:** CAN ID `0x100`, initial RPM of 1500.
+* **Speed ECU:** CAN ID `0x200`, vehicle speed of 60 km/h.
+* **Temperature ECU:** CAN ID `0x300`, engine temperature of 90 °C.
+* **Brake ECU:** CAN ID `0x400`, brake pressure of 50.
+* **Steering ECU:** CAN ID `0x500`, steering angle of 0 degrees.
+* **Infotainment ECU:** CAN ID `0x600`, system status of 1.
+
+![ECU Simulator Compilation and Execution](screenshots/step-08-ecu-simulator-compilation.png)
+
+**Screenshot 12:** Terminal showing the GCC compilation command, executable verification using `ls -l`, and successful execution of the six-ECU simulator.
+
+### Step 8 Completion
+
+The `ecu_simulator.c` source file has been **compiled successfully using GCC**, and the resulting executable has been verified and run without errors.
+
+The program correctly displays the initial parameters and assigned CAN IDs for all six ECUs, confirming that the initial simulator implementation is functional.
+
+**Note:** This step verifies compilation and program execution only. The current version displays ECU information in the terminal but does not yet transmit CAN frames through `vcan0`. CAN frame transmission will be implemented and tested in a subsequent step.
