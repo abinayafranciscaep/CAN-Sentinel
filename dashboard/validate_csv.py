@@ -1,9 +1,7 @@
 """
-validate_csv.py - checks a CAN-Sentinel CSV against the schema (design doc, Section 5.1)
+validate_csv.py - checks a CAN-Sentinel CSV against the schema
 Usage: python3 dashboard/validate_csv.py data/<file>.csv
 
-Q1 (why recv has a timeout): <your answer>
-Q2 (why DLC 0 gives two commas): <your answer>
 """
 import csv
 import re
@@ -18,17 +16,17 @@ def check_row(row):
         return [f"expected 5 columns, got {len(row)}"]
     timestamp, can_id, dlc, data_hex, label = row
 
-    # Check 1: timestamp must be a number, or Abinaya's feature code can't compute inter-arrival times
+    # Check 1: timestamp must be a number or the feature code can't compute inter-arrival times
     try:
         float(timestamp)
     except ValueError:
         problems.append(f"timestamp not a number: {timestamp!r}")
 
-    # Check 2: ID must be 0x + 3 uppercase hex digits, or her per-ID grouping splits one ID into two names
+    # Check 2: ID must be 0x + 3 uppercase hex digits, or per-ID grouping splits one ID into two names
     if not re.fullmatch(r"0x[0-9A-F]{3}", can_id):
         problems.append(f"can_id bad format: {can_id!r}")
 
-    # Check 3: DLC must be an integer from 0 to 8 (classic CAN)
+    # Check 3: DLC must be an integer from 0 to 8
     dlc_int = None
     try:
         dlc_int = int(dlc)
