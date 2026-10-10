@@ -1,3 +1,29 @@
+# Phase 1: Linux Environment and Virtual CAN (SocketCAN) Setup
+
+## Overview
+
+This phase describes the implementation of the CAN-Sentinel Member 1 module, focusing on the configuration of a Linux development environment and the establishment of a virtual Controller Area Network (CAN) environment.
+
+The implementation uses **Kali Linux, Oracle VirtualBox, Linux SocketCAN, and the Virtual CAN (`vcan0`) interface**. This environment provides a platform for configuring CAN communication, transmitting and receiving CAN frames, and verifying communication without requiring physical CAN hardware.
+
+The phase begins with configuring the Kali Linux development environment and installing the necessary CAN utilities and compilation tools. It then covers the creation and verification of the `vcan0` virtual CAN interface, followed by testing CAN communication using the available CAN utilities.
+
+These initial configurations establish the foundation for the subsequent ECU simulator development phase, in which C-based programs will simulate vehicle Electronic Control Units (ECUs) and generate CAN traffic.
+
+The following subsections document each implementation stage, including the commands executed, their purpose, verification results, and corresponding screenshots.
+
+## Implementation Steps
+
+The Linux environment and Virtual CAN setup are organized into the following stages:
+
+1. **Configure Kali Linux on VirtualBox** — Establish and verify the Linux development environment.
+2. **Install Required Packages** — Install `can-utils`, GCC, and Make for CAN communication and C program development.
+3. **Create and Configure the Virtual CAN Interface** — Load the `vcan` kernel module and create the `vcan0` interface.
+4. **Verify the Virtual CAN Interface Details** — Confirm the interface configuration and operational state.
+5. **Test CAN Communication** — Transmit and receive test CAN frames using `cansend` and `candump`.
+
+Each stage is documented in detail in the following subsections.
+
 ## Step 1: Configure Kali Linux on VirtualBox
 
 The CAN-Sentinel Member 1 module is developed using **Kali Linux Rolling** running inside **Oracle VirtualBox**. The virtual machine provides an isolated Linux environment for implementing the **SocketCAN-based virtual CAN network**, developing the **C-based ECU simulators**, generating normal CAN traffic, and performing CAN traffic monitoring.
@@ -427,6 +453,39 @@ The communication test confirms that:
 * CAN communication through the **SocketCAN virtual CAN interface** was successfully verified.
 
 The `vcan0` interface is now ready for the next stage of the CAN-Sentinel Member 1 implementation, where the **C-based ECU simulator programs** will be developed and used to generate CAN traffic.
+
+# Phase 2: ECU Simulator Development
+
+## Overview
+
+This phase focuses on the initial development and verification of the C-based Electronic Control Unit (ECU) simulator for the CAN-Sentinel project. The simulator represents six vehicle subsystems, each associated with a unique CAN identifier and an initial parameter value.
+
+The implementation is carried out using **Kali Linux, GCC, and the C programming language** within the project development environment established in Phase 1. The existing Linux SocketCAN framework and `vcan0` virtual CAN interface provide the foundation for subsequent CAN frame transmission and communication testing.
+
+The development begins by creating a dedicated directory for the ECU simulator source files and compiled executables. A C source file is then created to define the initial parameters and CAN identifiers of six simulated ECUs. The program is compiled using GCC and executed to verify that the ECU information is displayed correctly in the terminal.
+
+The six simulated ECUs represent the following vehicle subsystems:
+
+1. **Engine RPM ECU** — Represents engine rotational speed.
+2. **Speed ECU** — Represents vehicle speed.
+3. **Temperature ECU** — Represents engine temperature.
+4. **Brake ECU** — Represents brake pressure.
+5. **Steering ECU** — Represents steering angle.
+6. **Infotainment ECU** — Represents infotainment system status.
+
+At this initial stage, the simulator displays the ECU parameters and their assigned CAN identifiers. Actual CAN frame transmission and dynamic ECU behavior are not yet implemented and will be addressed in subsequent development steps.
+
+The following subsections document the creation of the simulator directory, source code implementation, compilation, execution, and verification, along with the corresponding terminal outputs and screenshots.
+
+## Implementation Steps
+
+The ECU simulator development is organized into the following stages:
+
+* **Step 2.1: Create the ECU Simulator Directory** — Create and verify the directory for the C source files and compiled executables.
+* **Step 2.2: Create the Six-ECU Simulator Source File** — Define the six simulated ECUs, their CAN identifiers, and initial parameter values.
+* **Step 2.3: Compile and Run the ECU Simulator** — Compile the C source file using GCC and verify the program output.
+
+These steps establish the initial six-ECU simulator implementation and prepare the project for subsequent development of CAN frame transmission through the `vcan0` virtual CAN interface.
 
 ## Step 6: Create the ECU Simulator Directory
 
