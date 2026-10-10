@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
 CAN-Sentinel Attacker Framework
-Day 5: CLI skeleton and local vcan0 interface validation.
-
-Attack transmission is intentionally not implemented yet.
-All future testing must remain restricted to the local vcan0 lab.
+Day 6: Rate-limited flood simulation on the local vcan0 interface.
 """
 
 import argparse
+import math
+import socket
+import struct
 import subprocess
 import sys
+import time
 
 ALLOWED_INTERFACE = "vcan0"
+MAX_DURATION = 5.0
+MAX_RATE = 100
+MAX_FRAMES = 500
 
 PLANNED_ATTACKS = {
-    "flood": "High-rate CAN frame transmission (planned)",
+    "flood": "Rate-limited local vcan0 traffic simulation",
     "spoof_brake": "Brake message spoofing (planned)",
     "replay": "Previously captured frame replay (planned)",
     "fuzz": "Controlled CAN payload fuzzing (planned)",
@@ -24,74 +28,143 @@ PLANNED_ATTACKS = {
 
 
 def check_interface(interface):
-    """Check whether the permitted local virtual CAN interface exists."""
+    """Allow only the configured local virtual CAN interface."""
     if interface != ALLOWED_INTERFACE:
-        print(
-            f"[ERROR] Only '{ALLOWED_INTERFACE}' is permitted.",
-            file=sys.stderr,
-        )
+        print("[ERROR] Only vcan0 is permitted.", file=sys.stderr)
         return False
 
     result = subprocess.run(
-        ["ip", "link", "show", "dev", interface],
+        ["ip", "-details", "link", "show", "dev", interface],
         capture_output=True,
         text=True,
         check=False,
     )
 
     if result.returncode != 0:
-        print(f"[ERROR] Interface '{interface}' was not found.")
-        print("Check it with: ip link show vcan0")
+        print("[ERROR] vcan0 does not exist or cannot be inspected.")
+        print("Create the virtual interface before testing.")
         return False
 
-    print(f"[OK] Interface '{interface}' exists.")
-    print("[INFO] This is an interface existence check, not an attack test.")
+    print("[OK] vcan0 exists.")
     return True
+
+
+def run_flood(duration, rate, execute):
+    """Send bounded standard CAN frames only when explicitly requested."""
+    if not check_interface(ALLOWED_INTERFACE):
+        return 1
+
+    if duration <= 0 or duration > MAX_DURATION:
+        print(f"[ERROR] Duration must be between 0 and {MAX_DURATION} seconds.")
+        return 1
+
+    if rate <= 0 or rate > MAX_RATE:
+        print(f"[ERROR] Rate must be between 1 and {MAX_RATE} frames/second.")
+        return 1
+
+    frame_count = math.ceil(duration * rate)
+
+    if frame_count > MAX_FRAMES:
+        print(f"[ERROR] Maximum frame count is {MAX_FRAMES}.")
+        return 1
+
+    print("[INFO] Target: local vcan0 only")
+    print(f"[INFO] Duration: {duration} seconds")
+    print(f"[INFO] Requested rate: {rate} frames/second")
+    print(f"[INFO] Maximum frames for this run: {frame_count}")
+    print("[INFO] Standard CAN ID: 0x000; payload length: 8 bytes")
+
+    if not execute:
+        print("[DRY RUN] No CAN frames transmitted.")
+        print("Use --execute to run this bounded local test.")
+        return 0
+
+    can_socket = None
+    sent = 0
+
+    try:
+        can_socket = socket.socket(
+            socket.PF_CAN,
+            socket.SOCK_RAW,
+            socket.CAN_RAW,
+        )
+        can_socket.bind((ALLOWED_INTERFACE,))
+
+        payload = bytes([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88])
+        frame = struct.pack("=IB3x8s", 0x000, len(payload), payload)
+
+        start = time.monotonic()
+        interval = 1.0 / rate
+
+        for index in range(frame_count):
+            target_time = start + index * interval
+            remaining = target_time - time.monotonic()
+
+            if remaining > 0:
+                time.sleep(remaining)
+
+            if time.monotonic() - start >= duration:
+                break
+
+            can_socket.send(frame)
+            sent += 1
+
+        elapsed = time.monotonic() - start
+        print(f"[DONE] Frames sent: {sent}")
+        print(f"[DONE] Elapsed time: {elapsed:.3f} seconds")
+        print("[INFO] Transmission was restricted to vcan0.")
+        return 0
+
+    except OSError as error:
+        print(f"[ERROR] CAN transmission failed: {error}", file=sys.stderr)
+        return 1
+
+    finally:
+        if can_socket is not None:
+            can_socket.close()
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="CAN-Sentinel local vcan0 attacker framework"
+        description="CAN-Sentinel local vcan0 testing framework"
     )
-
     parser.add_argument(
         "--interface",
         default=ALLOWED_INTERFACE,
-        help="Permitted lab interface (default: vcan0)",
+        help="Only vcan0 is allowed",
     )
-
     parser.add_argument(
         "--check-interface",
         action="store_true",
-        help="Check whether the permitted interface exists",
+        help="Check whether vcan0 exists",
     )
-
     parser.add_argument(
         "--list-attacks",
         action="store_true",
-        help="List planned attack modules",
+        help="List available and planned modules",
     )
-
     parser.add_argument(
         "--attack",
         choices=sorted(PLANNED_ATTACKS),
-        help="Select a planned attack module (not implemented yet)",
+        help="Select a module",
     )
-
     parser.add_argument(
         "--duration",
         type=float,
-        default=5.0,
-        help="Planned duration in seconds (default: 5)",
+        default=1.0,
+        help="Flood duration in seconds (maximum 5)",
     )
-
     parser.add_argument(
         "--rate",
         type=int,
-        default=100,
-        help="Planned frame rate in frames/second (default: 100)",
+        default=10,
+        help="Flood rate in frames/second (maximum 100)",
     )
-
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually transmit bounded frames on local vcan0",
+    )
     return parser
 
 
@@ -102,28 +175,21 @@ def main():
     if args.interface != ALLOWED_INTERFACE:
         parser.error("Safety restriction: only --interface vcan0 is allowed")
 
-    if args.duration <= 0:
-        parser.error("--duration must be greater than zero")
-
-    if args.rate <= 0:
-        parser.error("--rate must be greater than zero")
+    if args.check_interface:
+        return 0 if check_interface(args.interface) else 1
 
     if args.list_attacks:
-        print("Planned CAN-Sentinel attack modules:")
+        print("CAN-Sentinel modules:")
         for name, description in PLANNED_ATTACKS.items():
             print(f"  {name:<12} {description}")
         return 0
 
-    if args.check_interface:
-        return 0 if check_interface(args.interface) else 1
+    if args.attack == "flood":
+        return run_flood(args.duration, args.rate, args.execute)
 
     if args.attack:
-        print(f"[INFO] Selected module: {args.attack}")
-        print(f"[INFO] Interface: {args.interface}")
-        print(f"[INFO] Planned duration: {args.duration} seconds")
-        print(f"[INFO] Planned rate: {args.rate} frames/second")
-        print("[NOT IMPLEMENTED] No CAN frames were transmitted.")
-        print("Attack implementation is scheduled for a later project day.")
+        print(f"[PLANNED] {args.attack} is not implemented yet.")
+        print("[INFO] No CAN frames transmitted.")
         return 0
 
     parser.print_help()
