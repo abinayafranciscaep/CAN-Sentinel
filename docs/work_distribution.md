@@ -23,7 +23,7 @@ Group 3 splits Project 1 (CAN-Sentinel, Automotive ECU Intrusion Detection Syste
 
 ## Project 1: week-wise task distribution
 
-Weeks 1-2 are checked at the mid review (proposed Oct 25); Weeks 3-4 at the final review (proposed Nov 10).
+Weeks 1-2 are checked at the mid review (Oct 27-30); Weeks 3-4 at the final review (proposed Nov 10).
 
 | Week | Abinaya (Lead) | Haleem (Member 1) | Chetan (Member 2) | Sadhamail (Member 3) |
 | --- | --- | --- | --- | --- |
@@ -32,7 +32,7 @@ Weeks 1-2 are checked at the mid review (proposed Oct 25); Weeks 3-4 at the fina
 | Week 3 (Oct 19-25): live integration | Connect ML engine to live sniffer stream; alert JSON output; first threshold tuning; mid review viva preparation | One-command launch script for vcan0 and all ECUs; support socket bridge testing | Unix domain socket bridge from sniffer to ML engine; mid review demo run | Live PyQt dashboard: traffic view, threat gauge, car diagram fed by alert JSON |
 | Week 4 (Oct 26-Nov 4): polish and bonus | Final threshold tuning; final evaluation (precision, recall, time-to-detect per attack); incident response playbook; final report | Code cleanup and setup documentation; support for error-frame countermeasure testing | Bonus: error-frame countermeasure against injected frames; attack demo scripts | Dashboard polish; test plan and QA; final demo video and social media video |
 
-All members: one meaningful commit per day on their own branch, a Pull Request when a piece of work is complete, and attendance at both reviews.
+All members: one meaningful commit per day on their own branch, no commits to main, and attendance at both reviews.
 
 ## Hand-offs between members
 
@@ -52,11 +52,11 @@ Full schemas are in docs/week1\_design.md in the repository; any change needs te
 
 | Review | Window | What is checked | GitHub requirement |
 | --- | --- | --- | --- |
-| Mid review | Oct 25, 2026 (proposed; official window Oct 20-27) | Weeks 1-2: environment, datasets, trained model; project evaluation, viva, attendance, social media video | Commits on at least 10 different days in the 14 days before the review (Oct 12-25) |
+| Mid review | Oct 27-30, 2026 (rescheduled by Infotact; exact date to be confirmed) | Weeks 1-2: environment, datasets, trained model; project evaluation, viva, attendance, social media video | Commits on at least 10 different days in the 14 days before the review (counted back from the confirmed review date) |
 | Final review | Nov 10, 2026 (proposed; official window Nov 5-10) | Weeks 3-4: live integration, dashboard, final report; project evaluation, viva, attendance, social media video | At least one commit every day in the 20 days before the review (Oct 22-Nov 10) |
 
-- Each member commits only to their own branch; main holds merged code only.
-- The team lead reviews and merges every Pull Request into main.
+- Each member commits only to their own branch; nobody commits to main, so each member's effort is assessed on their own branch.
+- The team lead reviews each member's branch weekly; no Pull Requests are merged into main.
 - Members reply in the team group within 24 hours; a member unresponsive for 48 hours is reported to Infotact and their tasks are reassigned in this document.
 
 ## Project 2 (Month 2)
@@ -82,3 +82,4 @@ Roles carry over to Project 2; week-wise tasks will be assigned once the project
 | Version | Date | Change |
 | --- | --- | --- |
 | 1.0 | Oct 6, 2026 | First draft, before kickoff call |
+| 1.1 | Oct 11, 2026 | Mid review rescheduled by Infotact to Oct 27-30; work stays on each member's own branch, no commits or merges to main |
