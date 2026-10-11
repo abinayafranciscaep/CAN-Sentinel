@@ -789,3 +789,106 @@ The `ecu_simulator.c` source file has been **compiled successfully using GCC**, 
 The program correctly displays the initial parameters and assigned CAN IDs for all six ECUs, confirming that the initial simulator implementation is functional.
 
 **Note:** This step verifies compilation and program execution only. The current version displays ECU information in the terminal but does not yet transmit CAN frames through `vcan0`. CAN frame transmission will be implemented and tested in a subsequent step.
+
+## Step 9: Verify SocketCAN and Back Up the ECU Simulator
+
+Before modifying the existing ECU simulator to support CAN communication, the virtual CAN interface and required Linux SocketCAN header files were verified. A backup of the working Step 8 source code was then created to preserve the original implementation.
+
+These preparations ensure that the environment is ready for the next stage of development, where the ECU simulator will be updated to transmit CAN frames through the `vcan0` interface.
+
+### Step 9.1: Verify `vcan0` and SocketCAN Headers
+
+First, verify that the virtual CAN interface exists and is active.
+
+Run the following command:
+
+```bash
+ip link show vcan0
+```
+
+**Output:**
+
+```text
+3: vcan0: <NOARP,UP,LOWER_UP> mtu 2060 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/can
+```
+
+The output confirms that the `vcan0` interface exists and is up. It is configured as a virtual CAN network interface and is available for local CAN communication testing.
+
+Next, verify that the Linux SocketCAN header files required for CAN communication are available.
+
+```bash
+ls /usr/include/linux/can.h /usr/include/linux/can/raw.h
+```
+
+**Output:**
+
+```text
+/usr/include/linux/can.h
+/usr/include/linux/can/raw.h
+```
+
+Both header files are present:
+
+- **`can.h`** — Provides core CAN data structures, constants, and definitions.
+- **`can/raw.h`** — Provides definitions for raw CAN sockets used to send and receive CAN frames.
+
+These checks confirm that the virtual CAN interface and the required SocketCAN header files are available for implementing CAN communication in the ECU simulator.
+
+![Verification of vcan0 and SocketCAN Headers](screenshots/step-09-vcan0-socketcan-verification.png)
+
+**Screenshot 13:** Terminal showing the active `vcan0` interface and the availability of the required SocketCAN header files.
+
+### Step 9.2: Back Up the Existing ECU Simulator
+
+Before modifying the source code, create a backup of the working Step 8 implementation. This preserves the original six-ECU simulator and allows it to be restored if necessary.
+
+Navigate to the ECU simulator directory:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+```
+
+Create a backup of the existing source file:
+
+```bash
+cp ecu_simulator.c ecu_simulator_step8_backup.c
+```
+
+Verify that the original source file, backup, and compiled executable are present:
+
+```bash
+ls -l
+```
+
+**Output:**
+
+```text
+total 24
+-rwxrwxr-x 1 kali kali 16008 Oct  9 01:54 ecu_simulator
+-rw-rw-r-- 1 kali kali   887 Oct  9 01:50 ecu_simulator.c
+-rw-rw-r-- 1 kali kali   887 Oct 10 02:12 ecu_simulator_step8_backup.c
+```
+
+The output confirms that `ecu_simulator_step8_backup.c` was created successfully. Both the original source file and its backup have a size of 887 bytes, consistent with the original Step 8 implementation.
+
+The existing compiled executable, `ecu_simulator`, is also present in the directory. The backup preserves the original source code independently of any subsequent changes made to `ecu_simulator.c`.
+
+![ECU Simulator Source Code Backup](screenshots/step-09-ecu-simulator-backup.png)
+
+**Screenshot 14:** Terminal showing the original ECU simulator source file, the successfully created backup, and the compiled executable in the directory listing.
+
+### Step 9 Completion
+
+The SocketCAN environment has been verified, and the original ECU simulator source code has been backed up successfully.
+
+The following preparations are complete:
+
+- The `vcan0` virtual CAN interface exists and is up.
+- The required Linux SocketCAN header files are available.
+- The original `ecu_simulator.c` source file has been preserved as `ecu_simulator_step8_backup.c`.
+- The existing compiled `ecu_simulator` executable is present.
+
+The environment is now ready for the next stage: updating `ecu_simulator.c` to initialize a SocketCAN socket, bind it to `vcan0`, and transmit CAN frames for all six ECUs.
+
+**Note:** This step verifies the environment and preserves the existing source code. It does not yet implement or verify CAN frame transmission.
