@@ -51,12 +51,12 @@ dashboard, and identifies the suspected CAN ID / ECU.
 
 | Component | Language | Owner | Folder |
 |---|---|---|---|
-| vcan0 setup + ECU simulators | C / shell | Abdul (Member 1) | ecu_sim/ |
+| vcan0 setup + ECU simulators | C / shell | Haleem (Member 1) | ecu_sim/ |
 | Attacker script | Python or C | Chetan (Member 2) | attacker/ |
 | C sniffer + Unix socket bridge | C | Chetan (Member 2) | sniffer/ |
-| CSV logger | Python | Sadhamil (Member 3) | dashboard/ |
+| CSV logger | Python | Sadhamail (Member 3) | dashboard/ |
 | ML engine (features, detection, alerts) | Python, scikit-learn | Abinaya (Lead) | ml_engine/ |
-| PyQt dashboard | Python, PyQt | Sadhamil (Member 3) | dashboard/ |
+| PyQt dashboard | Python, PyQt | Sadhamail (Member 3) | dashboard/ |
 | Threat model, schemas, reports | Markdown | Abinaya (Lead) | docs/ |
 
 ### 1.4 Trust boundaries
@@ -93,7 +93,7 @@ Normal ("golden") traffic the ECU simulators must produce. Detection is built on
 | 0x7DF | Diagnostic request (OBD-II broadcast) | Event only (not periodic) | 8 | Standard OBD-II / UDS request format | High (when abused) |
 
 Notes:
-- Payload layouts are a proposal. Abdul to confirm final IDs, periods and byte layouts (open item O1).
+- Payload layouts are a proposal. Haleem to confirm final IDs, periods and byte layouts (open item O1).
 - Normal traffic should include realistic variation: small timing jitter (about +/- 1 ms) and changing signal values (for example, speed ramping up and down), otherwise the model learns an unrealistically clean baseline.
 - The rolling counter is optional but recommended. It gives the rules layer a way to catch replay and some masquerade attacks.
 - Expected normal bus load: 50 (brake) + 100 (steering) + 100 (RPM) + 50 (speed) + 10 (temp) + 10 (infotainment) = **~320 frames/second**.
@@ -106,12 +106,12 @@ Notes:
 
 - **STRIDE** to enumerate threats per component and boundary.
 - **Risk score** = Likelihood (1-5) x Impact (1-5). 15-25 = High, 8-14 = Medium, 1-7 = Low.
-- **MITRE ATT&CK for ICS** for technique mapping. IDs below are best-effort and must be verified at attack.mitre.org/matrices/ics before the mid review (open item O4).
+- **MITRE ATT&CK for ICS** for technique mapping. All technique IDs and names below were verified against attack.mitre.org on Oct 12, 2026 (open item O4 closed; see Section 3.3).
 - Aligned with the risk-assessment approach of **ISO/SAE 21434** (TARA) and the threat categories listed in **UNECE R155** Annex 5 (for example, spoofing of messages, denial of service, unauthorized diagnostic access).
 
 ### 3.2 Threat register
 
-| ID | STRIDE | Threat | Entry point | L | I | Risk | ATT&CK for ICS (verify) | Attack in catalogue |
+| ID | STRIDE | Threat | Entry point | L | I | Risk | ATT&CK for ICS (verified) | Attack in catalogue |
 |---|---|---|---|---|---|---|---|---|
 | T1 | Spoofing | Compromised infotainment injects fake brake frames on 0x0A0 | TB2 | 4 | 5 | 20 High | T0855 Unauthorized Command Message; T0831 Manipulation of Control | spoof_brake |
 | T2 | Spoofing | Masquerade: real ECU silenced, attacker impersonates it with plausible frames | TB2 | 2 | 5 | 10 Medium | T0856 Spoof Reporting Message; T0832 Manipulation of View | masquerade |
@@ -122,7 +122,26 @@ Notes:
 | T7 | Denial of service | High-priority flood (for example, ID 0x000) starves legitimate ECUs of bus access | TB2 | 4 | 5 | 20 High | T0814 Denial of Service; T0813 Denial of Control | flood |
 | T8 | Elevation of privilege | Diagnostic abuse via 0x7DF (for example, session control, ECU reset) to gain privileged functions | TB3, TB2 | 2 | 4 | 8 Medium | T0858 Change Operating Mode; T0816 Device Restart/Shutdown | diag_abuse |
 
-### 3.3 Out of scope (documented, not implemented)
+### 3.3 ATT&CK for ICS verification (Oct 12, 2026)
+
+Every technique used in the threat register and in the alert JSON was checked on attack.mitre.org.
+
+| Technique ID | Official name | Used for |
+|---|---|---|
+| T0855 | Unauthorized Command Message | T1 spoof_brake, T3 replay |
+| T0831 | Manipulation of Control | T1 spoof_brake |
+| T0856 | Spoof Reporting Message | T2 masquerade |
+| T0832 | Manipulation of View | T2 masquerade |
+| T0836 | Modify Parameter | T4 fuzz |
+| T0842 | Network Sniffing | T6 reconnaissance |
+| T0814 | Denial of Service | T7 flood |
+| T0813 | Denial of Control | T7 flood |
+| T0858 | Change Operating Mode | T8 diag_abuse |
+| T0816 | Device Restart/Shutdown | T8 diag_abuse |
+
+Result: all IDs exist with the names used in this document; no changes needed. The alert JSON uses one primary technique per attack: spoof_brake and replay T0855, masquerade T0856, fuzz T0836, flood T0814, diag_abuse T0858.
+
+### 3.4 Out of scope (documented, not implemented)
 
 - Compromise of the infotainment ECU itself (we assume it is already compromised).
 - Attacks on the IDS host or the Unix socket (TB4).
@@ -250,10 +269,10 @@ Severity guide: brake or steering = critical; RPM, speed, diagnostics or bus-wid
 | 1 | GitHub repo, folder structure, README, branches | Abinaya | Done |
 | 2 | Invite collaborators and confirm everyone has cloned the repo | Abinaya / all | In progress |
 | 3 | Week 1 design document (this file) | Abinaya | Draft done, team review pending |
-| 4 | Linux environment with vcan0 working on each laptop | All (Abdul leads) | To do |
-| 5 | ECU simulators producing the baseline traffic in Section 2 | Abdul | To do |
-| 6 | CSV logger writing the schema in Section 5.1 | Sadhamil | To do |
-| 7 | First normal-traffic CSV committed as a small sample | Sadhamil + Abdul | To do |
+| 4 | Linux environment with vcan0 working on each laptop | All (Haleem leads) | To do |
+| 5 | ECU simulators producing the baseline traffic in Section 2 | Haleem | To do |
+| 6 | CSV logger writing the schema in Section 5.1 | Sadhamail | To do |
+| 7 | First normal-traffic CSV committed as a small sample | Sadhamail + Haleem | To do |
 | 8 | Attacker script skeleton (at least flood) | Chetan | To do |
 | 9 | Kickoff call: walk through this document and agree on schemas | All | To do |
 
@@ -261,12 +280,12 @@ Severity guide: brake or steering = critical; RPM, speed, diagnostics or bus-wid
 
 | ID | Question | Owner | Decide by |
 |---|---|---|---|
-| O1 | Confirm final ECU IDs, periods and payload layouts (Section 2), including the rolling counter | Abdul + Abinaya | Kickoff call |
+| O1 | Confirm final ECU IDs, periods and payload layouts (Section 2), including the rolling counter | Haleem + Abinaya | Kickoff call |
 | O2 | Is diag_abuse in scope, or kept as stretch goal? | Team | Kickoff call |
-| O3 | Who hosts vcan0, and how: WSL2 (check `sudo modprobe vcan` works) or an Ubuntu VM in VirtualBox | Abdul | Kickoff call |
-| O4 | Verify all MITRE ATT&CK for ICS technique IDs at attack.mitre.org | Abinaya | Before mid review |
+| O3 | Who hosts vcan0, and how: WSL2 (check `sudo modprobe vcan` works) or an Ubuntu VM in VirtualBox | Haleem | Kickoff call |
+| O4 | Verify all MITRE ATT&CK for ICS technique IDs at attack.mitre.org | Abinaya | Closed Oct 12, 2026: all 10 IDs verified (Section 3.3) |
 | O5 | Confirm Unix socket path and message format (Section 5.2) | Chetan + Abinaya | End of Week 2 |
-| O6 | Where to share full datasets that are too large for GitHub (for example, Google Drive) | Sadhamil | End of Week 1 |
+| O6 | Where to share full datasets that are too large for GitHub (for example, Google Drive) | Sadhamail | End of Week 1 |
 
 ---
 
