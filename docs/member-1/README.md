@@ -1111,3 +1111,58 @@ The following tasks are complete:
 
 **Note:** This step verifies that the updated source file has been saved and that the backup remains preserved. The updated program has not yet been confirmed to compile or transmit CAN frames successfully. Compilation and transmission testing will be performed in the next step.
 
+## Step 11: Compile the SocketCAN ECU Simulator
+
+After updating the `ecu_simulator.c` source file with the SocketCAN implementation, the next step is to compile the program using **GCC** and verify that the source code compiles successfully.
+
+The compiler is invoked with the `-Wall` and `-Wextra` flags to enable additional compiler warnings. This helps identify potential issues in the source code during development. The generated executable will be used in the following step to run the updated ECU simulator and verify its behavior.
+
+### Step 11.1: Navigate to the ECU Simulator Directory
+
+First, navigate to the directory containing the C source file:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+```
+
+This ensures that the compilation command is executed from the correct project directory.
+
+### Step 11.2: Compile the C Source File**
+
+Compile the SocketCAN ECU simulator using GCC:
+
+```bash
+gcc -Wall -Wextra -o ecu_simulator ecu_simulator.c
+```
+
+The command uses the following options:
+
+- **`-Wall`** — Enables a broad set of common compiler warnings.
+- **`-Wextra`** — Enables additional compiler warnings.
+- **`-o ecu_simulator`** — Specifies the name of the generated executable.
+- **`ecu_simulator.c`** — Specifies the C source file to compile.
+
+### Step 11.3: Verify the Compilation Result
+
+The compilation command produced no warnings or errors. The terminal returned to the command prompt, indicating that the compiler completed the operation successfully.
+
+The following commands were executed:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+gcc -Wall -Wextra -o ecu_simulator ecu_simulator.c
+```
+
+The output confirms that the compilation command completed without displaying any compiler warnings or errors. The executable is expected to be named `ecu_simulator`, as specified by the `-o` option. Its presence and execution will be verified in the following steps.
+
+![SocketCAN ECU Simulator Compilation](screenshots/step-11-ecu-simulator-compilation.png)
+
+**Screenshot 12:** Terminal showing the GCC compilation command and its successful completion without warnings or errors.
+
+### Step 11 Completion
+
+The updated `ecu_simulator.c` source file has been **compiled successfully using GCC** with the `-Wall` and `-Wextra` warning flags.
+
+This step confirms that the compiler reported no warnings or errors. The next step will verify and execute the compiled SocketCAN ECU simulator.
+
+**Note:** This step verifies compilation only. It does not yet confirm that the executable runs successfully or transmits CAN frames through `vcan0`. Those checks will be performed in the subsequent steps.
