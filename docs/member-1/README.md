@@ -889,6 +889,225 @@ The following preparations are complete:
 - The original `ecu_simulator.c` source file has been preserved as `ecu_simulator_step8_backup.c`.
 - The existing compiled `ecu_simulator` executable is present.
 
+
 The environment is now ready for the next stage: updating `ecu_simulator.c` to initialize a SocketCAN socket, bind it to `vcan0`, and transmit CAN frames for all six ECUs.
 
 **Note:** This step verifies the environment and preserves the existing source code. It does not yet implement or verify CAN frame transmission.
+
+## Step 10: Update the ECU Simulator for SocketCAN
+
+After verifying the `vcan0` virtual CAN interface and backing up the original ECU simulator source code, the next step is to update `ecu_simulator.c` to support CAN frame transmission using Linux SocketCAN.
+
+The updated implementation is designed to create a raw CAN socket, bind it to the `vcan0` interface, and transmit one CAN frame for each of the six simulated Electronic Control Units (ECUs). Each frame contains the ECU's assigned CAN identifier and its corresponding parameter encoded as a four-byte integer.
+
+### Step 10.1: Open the ECU Simulator Source File
+
+First, navigate to the ECU simulator directory:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+```
+
+Open the existing C source file using the Nano text editor:
+
+```bash
+nano ecu_simulator.c
+```
+
+The `ecu_simulator.c` file contains the original six-ECU simulator implementation developed in Step 8. This file will be updated to implement SocketCAN communication.
+
+The original source code has been preserved in `ecu_simulator_step8_backup.c`. This backup must remain unchanged so that the previous implementation can be restored if necessary.
+
+![Opening the ECU Simulator Source File](screenshots/step-10-open-source-file.png)
+
+**Screenshot 15:** Terminal showing navigation to the ECU simulator directory and opening `ecu_simulator.c` in Nano.
+
+### Step 10.2: Update the Source Code for SocketCAN
+Replace the existing contents of `ecu_simulator.c` with the updated SocketCAN implementation.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <linux/can.h>
+#include <linux/can/raw.h>
+
+#define CAN_INTERFACE "vcan0"
+
+static int send_can_frame(int sock, canid_t can_id,
+                          const char *ecu_name, int value)
+{
+    struct can_frame frame = {0};
+
+    frame.can_id = can_id;
+    frame.can_dlc = 4;
+
+    frame.data[0] = (uint8_t)((value >> 24) & 0xFF);
+    frame.data[1] = (uint8_t)((value >> 16) & 0xFF);
+    frame.data[2] = (uint8_t)((value >> 8) & 0xFF);
+    frame.data[3] = (uint8_t)(value & 0xFF);
+
+    ssize_t bytes_sent = write(sock, &frame, sizeof(frame));
+
+    if (bytes_sent != sizeof(frame)) {
+        if (bytes_sent < 0) {
+            perror("CAN frame transmission failed");
+        } else {
+            fprintf(stderr, "Incomplete CAN frame transmission\n");
+        }
+        return -1;
+    }
+
+    printf("%s | CAN ID: 0x%03X | Value: %d\n",
+           ecu_name, can_id, value);
+
+    return 0;
+}
+
+int main(void)
+{
+    int rpm = 1500;
+    int speed = 60;
+    int temperature = 90;
+    int brake_pressure = 50;
+    int steering_angle = 0;
+    int infotainment_status = 1;
+
+    int sock = socket(PF_CAN, SOCK_RAW, CAN_RAW);
+
+    if (sock < 0) {
+        perror("SocketCAN socket creation failed");
+        return EXIT_FAILURE;
+    }
+
+    struct ifreq ifr = {0};
+    strncpy(ifr.ifr_name, CAN_INTERFACE, IFNAMSIZ - 1);
+
+    if (ioctl(sock, SIOCGIFINDEX, &ifr) < 0) {
+        perror("Failed to get CAN interface index");
+        close(sock);
+        return EXIT_FAILURE;
+    }
+
+    struct sockaddr_can addr = {0};
+    addr.can_family = AF_CAN;
+    addr.can_ifindex = ifr.ifr_ifindex;
+
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("Failed to bind SocketCAN interface");
+        close(sock);
+        return EXIT_FAILURE;
+    }
+
+    printf("CAN-Sentinel ECU Simulator Started\n");
+    printf("CAN interface: %s\n\n", CAN_INTERFACE);
+
+    int result = 0;
+
+    result |= send_can_frame(sock, 0x100, "Engine RPM ECU", rpm);
+    result |= send_can_frame(sock, 0x200, "Speed ECU", speed);
+    result |= send_can_frame(sock, 0x300, "Temperature ECU", temperature);
+    result |= send_can_frame(sock, 0x400, "Brake ECU", brake_pressure);
+    result |= send_can_frame(sock, 0x500, "Steering ECU", steering_angle);
+    result |= send_can_frame(sock, 0x600, "Infotainment ECU",
+                             infotainment_status);
+
+    close(sock);
+
+    if (result != 0) {
+        return EXIT_FAILURE;
+    }
+
+    printf("\nAll six ECU CAN frames transmitted successfully.\n");
+
+    return EXIT_SUCCESS;
+}
+```
+
+The program uses Linux CAN headers and socket programming functions to initialize communication with the `vcan0` interface. It then prepares and transmits CAN frames for all six ECUs.
+
+The following table summarizes the ECUs and their assigned CAN identifiers.
+
+| ECU | CAN ID | Parameter |
+|---|---|---|
+| Engine RPM ECU | `0x100` | Engine RPM |
+| Speed ECU | `0x200` | Vehicle speed |
+| Temperature ECU | `0x300` | Engine temperature |
+| Brake ECU | `0x400` | Brake pressure |
+| Steering ECU | `0x500` | Steering angle |
+| Infotainment ECU | `0x600` | System status |
+
+The updated implementation performs the following operations:
+
+- **Socket creation:** Creates a raw CAN socket using `socket()` with `PF_CAN`, `SOCK_RAW`, and `CAN_RAW`.
+- **Interface identification:** Uses `ioctl()` to retrieve the interface index of `vcan0`.
+- **Socket binding:** Binds the socket to the selected virtual CAN interface using `bind()`.
+- **CAN frame preparation:** Assigns the appropriate CAN ID and encodes each ECU parameter into four data bytes.
+- **Frame transmission:** Uses `write()` to transmit one CAN frame for each ECU.
+- **Error handling:** Checks for socket creation, interface lookup, binding, and transmission failures.
+- **Resource cleanup:** Closes the socket after attempting to transmit the six frames.
+
+The initial ECU parameter values remain consistent with the original implementation:
+
+| ECU | Initial value |
+|---|---:|
+| Engine RPM | 1500 RPM |
+| Vehicle speed | 60 km/h |
+| Engine temperature | 90 °C |
+| Brake pressure | 50 |
+| Steering angle | 0 degrees |
+| Infotainment system status | 1 |
+
+This version is designed to transmit six CAN frames and then terminate. It does not yet continuously generate changing vehicle parameters.
+
+### Step 10.3: Save the Updated Source File
+
+After replacing the existing code in Nano, save the file and exit the editor.
+
+Use the following keyboard shortcuts:
+
+1. Press `Ctrl + O` to write the changes to the file.
+2. Press `Enter` to confirm the filename.
+3. Press `Ctrl + X` to exit Nano.
+
+Next, verify that the updated source file and the original backup are present in the directory:
+
+```bash
+ls -l ecu_simulator.c ecu_simulator_step8_backup.c
+```
+
+**Output:**
+
+```text
+-rw-rw-r-- 1 kali kali 2701 Oct 10 02:29 ecu_simulator.c
+-rw-rw-r-- 1 kali kali  887 Oct 10 02:12 ecu_simulator_step8_backup.c
+```
+
+The output confirms that `ecu_simulator.c` has been updated and that `ecu_simulator_step8_backup.c` remains available.
+
+The updated source file is 2701 bytes, while the backup remains 887 bytes. These file sizes are consistent with the updated implementation being saved separately from the original Step 8 source code.
+
+![Updated SocketCAN Source Code](screenshots/step-10-socketcan-source-code.png)
+
+**Screenshot 16:** Nano editor displaying the updated `ecu_simulator.c` source code with SocketCAN support for all six ECUs.
+
+### Step 10 Completion
+
+The ECU simulator source file has been updated to implement the SocketCAN functionality required for transmitting CAN frames through the `vcan0` virtual CAN interface.
+
+The following tasks are complete:
+
+- The original ECU simulator source file was opened for modification.
+- The source code was updated to support raw SocketCAN communication.
+- The six ECUs retain their assigned CAN IDs and initial parameter values.
+- The updated source file was saved successfully.
+- The original Step 8 source code remains preserved in `ecu_simulator_step8_backup.c`.
+
+**Note:** This step verifies that the updated source file has been saved and that the backup remains preserved. The updated program has not yet been confirmed to compile or transmit CAN frames successfully. Compilation and transmission testing will be performed in the next step.
+
