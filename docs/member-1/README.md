@@ -1166,3 +1166,68 @@ The updated `ecu_simulator.c` source file has been **compiled successfully using
 This step confirms that the compiler reported no warnings or errors. The next step will verify and execute the compiled SocketCAN ECU simulator.
 
 **Note:** This step verifies compilation only. It does not yet confirm that the executable runs successfully or transmits CAN frames through `vcan0`. Those checks will be performed in the subsequent steps.
+
+## Step 12: Verify and Run the SocketCAN ECU Simulator
+
+After compiling the SocketCAN ECU simulator in Step 11, the next step is to verify that the generated executable exists and run it to confirm that the program starts and processes the configured ECU messages.
+
+### Step 12.1: Verify the Compiled Executable
+
+Navigate to the ECU simulator directory and verify that the compiled executable exists:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+ls -l ecu_simulator
+```
+
+The terminal displayed the following output:
+
+```text
+-rwxrwxr-x 1 kali kali 16480 Oct 11 13:10 ecu_simulator
+```
+
+This confirms that the `ecu_simulator` executable exists in the project directory. The file permissions indicate that the owner, group, and other users have execute permission.
+
+### Step 12.2: Execute the ECU Simulator
+
+Run the compiled executable:
+
+```bash
+./ecu_simulator
+```
+
+The program produced the following output:
+
+```text
+CAN-Sentinel ECU Simulator Started
+
+CAN interface: vcan0
+
+Engine RPM ECU | CAN ID: 0x100 | Value: 1500
+
+Speed ECU | CAN ID: 0x200 | Value: 60
+
+Temperature ECU | CAN ID: 0x300 | Value: 90
+
+Brake ECU | CAN ID: 0x400 | Value: 50
+
+Steering ECU | CAN ID: 0x500 | Value: 0
+
+Infotainment ECU | CAN ID: 0x600 | Value: 1
+
+All six ECU CAN frames transmitted successfully.
+```
+
+The output indicates that the simulator started, identified `vcan0` as its CAN interface, and reported successful transmission of frames for all six configured ECUs: Engine RPM, Speed, Temperature, Brake, Steering, and Infotainment.
+
+The program returned to the terminal prompt after displaying the output.
+
+![SocketCAN ECU Simulator Execution](screenshots/step-12-ecu-simulator-execution.png)
+
+**Screenshot 13:** Terminal showing the executable verification, simulator startup, configured CAN interface, all six ECU messages, and the completion message.
+
+### Step 12 Completion
+
+The compiled ECU simulator executable was verified, and the program ran to completion without displaying an error in the captured terminal output.
+
+The simulator reported successful transmission of all six ECU CAN frames through its configured `vcan0` interface. However, this output alone does not independently confirm that the frames were received on the virtual CAN interface. That will be verified in the next step using `candump`.
