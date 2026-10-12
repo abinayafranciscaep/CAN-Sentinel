@@ -1231,3 +1231,68 @@ The program returned to the terminal prompt after displaying the output.
 The compiled ECU simulator executable was verified, and the program ran to completion without displaying an error in the captured terminal output.
 
 The simulator reported successful transmission of all six ECU CAN frames through its configured `vcan0` interface. However, this output alone does not independently confirm that the frames were received on the virtual CAN interface. That will be verified in the next step using `candump`.
+
+## Step 13: Verify CAN Frames Using `candump`
+
+After executing the SocketCAN ECU simulator in Step 12, the next step is to independently verify whether the generated CAN frames are visible on the `vcan0` virtual CAN interface. The `candump` utility from the SocketCAN tools is used to capture and display CAN traffic received by the interface.
+
+### Step 13.1: Start the CAN Frame Capture
+
+Open a Kali Linux terminal and execute:
+
+```bash
+candump vcan0
+```
+
+This command listens for CAN frames on the `vcan0` interface and displays each received frame, including its CAN identifier, data length code (DLC), and payload bytes.
+
+### Step 13.2: Run the ECU Simulator
+
+In a separate terminal, navigate to the ECU simulator directory and execute the program:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+./ecu_simulator
+```
+
+While the simulator runs, observe the terminal running `candump vcan0` to verify whether the frames are received.
+
+### Step 13.3: Verify the Captured CAN Frames
+
+The `candump` terminal displayed the following output:
+
+```text
+vcan0  100   [4]  00 00 05 DC
+vcan0  200   [4]  00 00 00 3C
+vcan0  300   [4]  00 00 00 5A
+vcan0  400   [4]  00 00 00 32
+vcan0  500   [4]  00 00 00 00
+vcan0  600   [4]  00 00 00 01
+```
+
+The captured output confirms that six CAN frames were observed on `vcan0`, corresponding to the six configured ECUs.
+
+The captured identifiers and decoded payload values are summarized below:
+
+| ECU | CAN ID | DLC | Payload value |
+|---|---|---|---|
+| Engine RPM | `0x100` | 4 | 1500 |
+| Speed | `0x200` | 4 | 60 |
+| Temperature | `0x300` | 4 | 90 |
+| Brake | `0x400` | 4 | 50 |
+| Steering | `0x500` | 4 | 0 |
+| Infotainment | `0x600` | 4 | 1 |
+
+The payload values are represented as four-byte, big-endian integers. For example, `00 00 05 DC` corresponds to decimal 1500, while `00 00 00 3C` corresponds to decimal 60.
+
+![CAN Frames Captured Using candump](screenshots/step-13-candump-verification.png)
+
+**Screenshot 14:** Terminal displaying the six CAN frames captured using `candump vcan0`, including their CAN identifiers, DLC values, and payload bytes.
+
+**Note:** The captured frames currently use a DLC of 4. The finalized protocol in Step 15 requires a DLC of 8, with the rolling counter stored in byte 7. The current Brake and Steering identifiers (`0x400` and `0x500`) will also be updated to match the team lead's specification.
+
+### Step 13 Completion
+
+The `candump` verification successfully demonstrated that the simulator's six CAN frames were observable on the `vcan0` virtual CAN interface. The captured identifiers and payloads matched the values reported by the current simulator.
+
+This establishes a working baseline for CAN frame transmission and reception. The message format, DLC, rolling counter, transmission periods, and final ECU identifiers will be aligned with the Week 1 design specification in the subsequent development steps.
