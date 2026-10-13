@@ -1296,3 +1296,1581 @@ The payload values are represented as four-byte, big-endian integers. For exampl
 The `candump` verification successfully demonstrated that the simulator's six CAN frames were observable on the `vcan0` virtual CAN interface. The captured identifiers and payloads matched the values reported by the current simulator.
 
 This establishes a working baseline for CAN frame transmission and reception. The message format, DLC, rolling counter, transmission periods, and final ECU identifiers will be aligned with the Week 1 design specification in the subsequent development steps.
+
+
+## Step 14: Organize the ECU Simulator and Document Build/Run Instructions
+
+In this step, the ECU simulator source code is organized under the `ecu_sim/` directory, and build and run instructions are documented for reproducibility. A dedicated README file is maintained inside `ecu_sim/` to explain the simulator prerequisites, compilation, execution, and verification. The Member 1 documentation records the directory structure and links to the simulator guide.
+
+### Step 14.1: Verify the ECU Simulator Directory Structure
+
+The `ecu_sim/` directory was checked to confirm that the ECU simulator source file is present in the expected location within the CAN-Sentinel repository.
+
+#### Step 14.1.1: Navigate to the CAN-Sentinel Repository
+
+The following command was executed in Windows PowerShell to navigate to the local repository:
+
+```powershell
+cd D:\Study\Projects\CAN-Sentinel
+```
+
+#### Step 14.1.2: Verify the ECU Simulator Source File
+
+The following command was used to list the contents of the `ecu_sim/` directory:
+
+```powershell
+Get-ChildItem .\ecu_sim
+```
+
+The command produced the following output:
+
+```text
+Directory: D:\Study\Projects\CAN-Sentinel\ecu_sim
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----         06-10-2026  11:14 PM              0 .gitkeep
+-a----         11-10-2026  11:23 PM           2701 ecu_simulator.c
+```
+
+The output confirms that `ecu_simulator.c` exists in the `ecu_sim/` directory. The directory also contains `.gitkeep`, which is retained.
+
+![ECU Simulator Directory Verification](screenshots/step-14-ecu-simulator-directory.png)
+
+Screenshot 15: PowerShell output confirming that `ecu_simulator.c` is present in the `ecu_sim/` directory.
+
+**Result**
+
+The ECU simulator source file is present in the expected directory. The source file will be updated in place during the subsequent CAN protocol implementation step.
+
+### Step 14.2: Verify the ECU Simulator Source File
+
+The existing ECU simulator source file was opened in Visual Studio Code to confirm that it is accessible for future development and modification.
+
+#### Step 14.2.1: Locate the Source File
+
+The source file is located at the following path within the CAN-Sentinel repository:
+
+```text
+ecu_sim/ecu_simulator.c
+```
+
+#### Step 14.2.2: Open the Source File in Visual Studio Code
+
+The `ecu_simulator.c` file was opened in Visual Studio Code, and the existing C source code was displayed in the editor.
+
+No changes were made to the source code during this step.
+
+![ECU Simulator Source File in VS Code](screenshots/step-14-ecu-simulator-source.png)
+
+Screenshot 16: Visual Studio Code displaying the existing `ecu_simulator.c` source file, ready for the CAN protocol implementation.
+
+**Result**
+
+The ECU simulator source file was successfully opened in Visual Studio Code and is ready for modification during Step 15, when the finalized CAN protocol will be implemented.
+
+### Step 14.3: Verify the Git Working Tree
+
+Before creating the ECU simulator build and run documentation, the Git working tree was checked to identify any modified or untracked files in the local CAN-Sentinel repository.
+
+#### Step 14.3.1: Navigate to the Repository
+
+The following command was executed in the VS Code PowerShell terminal:
+
+```powershell
+cd D:\Study\Projects\CAN-Sentinel
+```
+
+#### Step 14.3.2: Check the Git Status
+
+The following command was used to inspect the working tree:
+
+```powershell
+git status --short
+```
+
+The command produced the following output:
+
+```text
+?? ecu_sim/ecu_simulator.c
+```
+
+The output indicates that `ecu_simulator.c` is an untracked file in the local Git working tree. The file has not yet been staged or committed.
+
+![Git Working Tree Status](screenshots/step-14-git-status.png)
+
+Screenshot 17: VS Code PowerShell terminal displaying the Git working tree status and identifying `ecu_simulator.c` as an untracked file.
+
+**Result**
+
+The repository status was checked before proceeding with the remaining Step 14 tasks to help ensure that only the intended files are included in the relevant Git commit.
+
+### Step 14.4: Create the ECU Simulator Build and Run Guide
+
+A dedicated `README.md` file will be created inside the `ecu_sim/` directory to document the prerequisites, compilation, execution, and verification of the ECU simulator. The Member 1 README update is reserved for Step 19.
+
+#### Step 14.4.1: Create `README.md`
+
+In Visual Studio Code Explorer, perform the following actions:
+
+1. Locate the `ecu_sim/` directory.
+2. Right-click the directory and select **New File**.
+3. Enter the filename `README.md`.
+
+#### Step 14.4.2: Verify the Directory Structure
+
+After creating the file, the directory structure should be:
+
+```text
+ecu_sim/
+├── .gitkeep
+├── ecu_simulator.c
+└── README.md
+```
+
+![ECU Simulator Documentation File](screenshots/step-14-ecu-simulator-readme.png)
+
+Screenshot 18: VS Code Explorer displaying the `ecu_sim/` directory with `.gitkeep`, `ecu_simulator.c`, and the newly created `README.md` file.
+
+Do not modify `ecu_simulator.c` during this step. The CAN protocol will be updated in Step 15.
+
+**Result**
+
+The dedicated ECU simulator documentation file will provide reproducible build and run instructions independently of the main Member 1 README. The main documentation will be updated later in Step 19, as planned.
+
+### Step 14.5: Add the ECU Simulator Build and Run Instructions
+
+A dedicated `README.md` file was created inside the `ecu_sim/` directory to document the prerequisites, compilation, execution, and CAN-frame verification procedures for the ECU simulator.
+
+#### Step 14.5.1: Document the Prerequisites
+
+The README lists the required environment and tools:
+
+- Kali Linux or another Linux distribution with SocketCAN support
+- GCC compiler
+- `can-utils` package
+- Configured and active `vcan0` virtual CAN interface
+
+#### Step 14.5.2: Document the Virtual CAN Interface Setup
+
+The instructions include commands to configure the virtual CAN interface when it does not already exist:
+
+```bash
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+```
+
+If the interface already exists, the `ip link add` command should not be executed again. The guide also includes the following command to verify the interface:
+
+```bash
+ip link show vcan0
+```
+
+#### Step 14.5.3: Document Compilation and Execution
+
+The README provides the following command to compile the ECU simulator from the root directory of the CAN-Sentinel repository:
+
+```bash
+gcc -Wall -Wextra -o ecu_sim/ecu_simulator ecu_sim/ecu_simulator.c
+```
+
+The compiled executable can then be launched from the repository root using:
+
+```bash
+./ecu_sim/ecu_simulator
+```
+
+The simulator working directory for these commands is the **root directory of the CAN-Sentinel repository**, not the `ecu_sim/` directory.
+
+The compilation command specifies the source file at `ecu_sim/ecu_simulator.c` and generates the executable at `ecu_sim/ecu_simulator`.
+
+#### Step 14.5.4: Document CAN-Frame Verification
+
+The guide explains how to monitor CAN traffic from a separate Kali Linux terminal using:
+
+```bash
+candump vcan0
+```
+
+This allows the user to inspect the frames transmitted by the ECU simulator through the virtual CAN interface.
+
+#### Step 14.5.5: Save the Documentation
+
+The updated `ecu_sim/README.md` file was saved in Visual Studio Code.
+
+![ECU Simulator Build and Run Guide](screenshots/step-14-ecu-simulator-build-run-guide.png)
+
+Screenshot 19: Visual Studio Code displaying the ECU simulator README with the prerequisites, virtual CAN interface setup, compilation, execution, and CAN-frame verification instructions.
+
+**Result**
+
+The build and run instructions have been documented in `ecu_sim/README.md` for subsequent validation in Kali Linux. The CAN protocol implementation and runtime verification remain separate tasks for the following steps.
+
+## Step 14.6: Verify the ECU Simulator Documentation
+
+After creating the ECU simulator build and run guide, the `ecu_sim/` directory and Git working tree were checked to confirm that the source file and documentation are present.
+
+### Step 14.6.1: Verify the Directory Contents
+
+The following command was executed in the VS Code PowerShell terminal:
+
+```powershell
+Get-ChildItem .\ecu_sim
+```
+
+The command produced the following output:
+
+```text
+Directory: D:\Study\Projects\CAN-Sentinel\ecu_sim
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----         06-10-2026  11:14 PM              0 .gitkeep
+-a----         11-10-2026  11:23 PM           2701 ecu_simulator.c
+-a----         12-10-2026  01:34 PM           2065 README.md
+```
+
+The output confirms that the directory contains `ecu_simulator.c` and the newly created `README.md`.
+
+### Step 14.6.2: Check the Git Working Tree
+
+The following command was used to inspect the repository status:
+
+```powershell
+git status --short
+```
+
+The command produced the following output:
+
+```text
+?? ecu_sim/README.md
+?? ecu_sim/ecu_simulator.c
+```
+
+The output confirms that Git recognizes both files as untracked. They have not yet been staged or committed.
+
+![ECU Simulator Git Status](screenshots/step-14-git-status-verification.png)
+
+Screenshot 21: VS Code PowerShell displaying the Git working tree status for the ECU simulator source file and documentation.
+
+### Result
+
+The ECU simulator source file and build/run documentation are present in the expected directory. Git identifies both files as untracked, meaning they have not yet been staged or committed. They will be reviewed before the Step 14 changes are committed.
+
+## Step 14.7: Review the ECU Simulator Build and Run Guide
+
+The `ecu_sim/README.md` file was reviewed to prepare for the subsequent compilation and runtime verification of the ECU simulator in Kali Linux.
+
+### Step 14.7.1: Display the README Content
+
+The following command was used in the VS Code PowerShell terminal to display the documentation:
+
+```powershell
+Get-Content .\ecu_sim\README.md
+```
+
+### Step 14.7.2: Review the Build and Run Instructions
+
+The documentation review focuses on the following items:
+
+- Required software and SocketCAN prerequisites
+- Virtual CAN interface configuration using `vcan0`
+- GCC compilation command
+- ECU simulator execution command
+- CAN-frame monitoring using `candump vcan0`
+
+![ECU Simulator Build and Run Guide Review](screenshots/step-14-ecu-simulator-readme-review.png)
+
+Screenshot 22: VS Code PowerShell displaying the `ecu_sim/README.md` content for review of the build and run instructions.
+
+### Result
+
+The README review step was performed in preparation for testing the documented commands in Kali Linux. Compilation and runtime behavior must be verified in the Linux environment before they are reported as successful.
+
+## Step 14.8: Inspect the Existing ECU Simulator Source Code in Kali Linux
+
+Before proceeding with the CAN protocol implementation, the existing ECU simulator source code was inspected in Kali Linux to establish the current implementation as a baseline.
+
+### Step 14.8.1: Navigate to the ECU Simulator Directory
+
+The following command was used to navigate to the existing ECU simulator directory:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+```
+
+### Step 14.8.2: Display the Source Code
+
+The following command was executed to display the contents of `ecu_simulator.c`:
+
+```bash
+sed -n '1,240p' ecu_simulator.c
+```
+
+The command displayed the existing C source code, including the following components:
+
+- Linux SocketCAN header files and interface configuration for `vcan0`
+- A function for creating and transmitting CAN frames
+- Initial values for the six simulated ECUs
+- Socket creation, CAN interface lookup, and interface binding
+- Transmission of six CAN frames using the existing identifiers
+- Error handling and socket cleanup
+
+The current implementation transmits each frame once, uses a data length code (DLC) of 4, and encodes each signal value as a four-byte integer. It uses the existing CAN identifiers `0x100`, `0x200`, `0x300`, `0x400`, `0x500`, and `0x600`.
+
+![Existing ECU Simulator Source Code](screenshots/step-14-ecu-simulator-source-inspection.png)
+
+Screenshot 23: Kali Linux terminal displaying the existing `ecu_simulator.c` source code for baseline inspection before the CAN protocol implementation.
+
+### Result
+
+The existing source code was inspected successfully in Kali Linux. This establishes the baseline for the subsequent CAN protocol implementation. The source code has not been modified during this inspection step.
+
+## Step 14.9: Verify the Virtual CAN Interface in Kali Linux
+
+Before compiling and testing the ECU simulator, the status of the virtual CAN interface was checked in Kali Linux to confirm that `vcan0` exists and is active.
+
+### Step 14.9.1: Execute the Interface Verification Command
+
+The following command was executed in the Kali Linux terminal:
+
+```bash
+ip link show vcan0
+```
+
+The command produced the following output:
+
+```text
+3: vcan0: <NOARP,UP,LOWER_UP> mtu 2060 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/can
+```
+### Result
+
+The output confirms that the `vcan0` interface exists and has the `UP` and `LOWER_UP` flags. The virtual CAN interface is available for the subsequent ECU simulator compilation and runtime verification. No files were modified or moved during this step.
+
+## Step 14.10: Compile the ECU Simulator in Kali Linux
+
+After verifying the existing source code and confirming that the `vcan0` interface was active, the ECU simulator was compiled using GCC in Kali Linux.
+
+### Step 14.10.1: Navigate to the ECU Simulator Directory
+
+The following command was executed to navigate to the existing ECU simulator directory:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+```
+
+### Step 14.10.2: Compile the ECU Simulator
+
+The following command was used to compile the C source file:
+
+```bash
+gcc -Wall -Wextra -o ecu_simulator ecu_simulator.c
+```
+
+The compilation command completed and returned to the terminal prompt without displaying any errors or warnings.
+
+![ECU Simulator Compilation](screenshots/step-14-ecu-simulator-compilation.png)
+
+Screenshot 24: Kali Linux terminal showing the GCC compilation command and the return to the terminal prompt without errors or warnings.
+
+### Result
+
+The ECU simulator source code compiled without any reported errors or warnings. The executable will be checked in the next step to confirm that the compilation output was generated successfully.
+
+## Step 14.11: Verify the Compiled ECU Simulator Executable
+
+After compiling the ECU simulator, the generated executable was verified in Kali Linux to confirm that the compilation output existed and was recognized as a valid executable file.
+
+### Step 14.11.1: Navigate to the ECU Simulator Directory
+
+The following command was executed to navigate to the existing ECU simulator directory:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+```
+
+### Step 14.11.2: Check the Executable File
+
+The following commands were executed to verify the executable's file size, permissions, file format, and architecture:
+
+```bash
+ls -lh ecu_simulator
+file ecu_simulator
+```
+
+The terminal returned the following output:
+
+```text
+-rwxrwxr-x 1 kali kali 17K Oct 12 07:13 ecu_simulator
+
+ecu_simulator: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=ad7e9eedb60624f7739086404cb38767d1f812b4, for GNU/Linux 3.2.0, not stripped
+```
+
+![ECU Simulator Executable Verification](screenshots/step-14-ecu-simulator-executable-verification.png)
+
+Screenshot 25: Kali Linux terminal displaying the executable's file permissions, size, ELF format, and x86-64 architecture.
+
+### Result
+
+The verification confirmed that the `ecu_simulator` executable was generated successfully. The file is a 64-bit ELF executable for the x86-64 architecture, and its permissions allow the owner, group, and other users to execute it.
+
+The executable is ready for the next stage of testing.
+
+## Step 14.12: Run the ECU Simulator in Kali Linux
+
+After verifying the compiled executable, the ECU simulator was executed in Kali Linux to confirm that it started successfully and transmitted the six ECU CAN frames through the `vcan0` interface.
+
+### Step 14.12.1: Execute the ECU Simulator
+
+The following commands were executed to navigate to the ECU simulator directory and run the compiled executable:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+./ecu_simulator
+```
+
+### Step 14.12.2: Verify the Execution Output
+
+The simulator produced the following terminal output:
+
+```text
+CAN-Sentinel ECU Simulator Started
+
+CAN interface: vcan0
+
+Engine RPM ECU | CAN ID: 0x100 | Value: 1500
+
+Speed ECU | CAN ID: 0x200 | Value: 60
+
+Temperature ECU | CAN ID: 0x300 | Value: 90
+
+Brake ECU | CAN ID: 0x400 | Value: 50
+
+Steering ECU | CAN ID: 0x500 | Value: 0
+
+Infotainment ECU | CAN ID: 0x600 | Value: 1
+
+All six ECU CAN frames transmitted successfully.
+```
+
+![ECU Simulator Execution](screenshots/step-14-ecu-simulator-execution.png)
+
+Screenshot 26: Kali Linux terminal showing the ECU simulator startup message, configured CAN identifiers, signal values, and transmission status.
+
+### Result
+
+The ECU simulator started successfully and reported successful transmission of all six ECU CAN frames through `vcan0`. The output confirms that the current implementation executed without reporting a transmission error.
+
+This was a preliminary execution test using the existing implementation. The CAN IDs, payload lengths, transmission intervals, and signal encoding will be updated in Step 15 to match the finalized team-lead protocol.
+
+## Step 14.13: Verify CAN Frames Using candump
+
+In this step, the CAN frames transmitted by the ECU simulator were monitored using `candump` on the `vcan0` interface to verify that the frames were visible on the virtual CAN bus.
+
+### Step 14.13.1: Monitor CAN Traffic
+
+The following command was executed in the Kali Linux terminal:
+
+```bash
+candump -n 6 vcan0
+```
+
+The command listened for six CAN frames on the `vcan0` interface and displayed the following output:
+
+```text
+vcan0  100   [4]  00 00 05 DC
+vcan0  200   [4]  00 00 00 3C
+vcan0  300   [4]  00 00 00 5A
+vcan0  400   [4]  00 00 00 32
+vcan0  500   [4]  00 00 00 00
+vcan0  600   [4]  00 00 00 01
+```
+
+### Step 14.13.2: Verify the Received Frames
+
+The `candump` output confirmed that all six CAN frames were observable on `vcan0`.
+
+| CAN ID | Payload | Interpreted Value |
+|---|---|---:|
+| `0x100` | `00 00 05 DC` | 1500 |
+| `0x200` | `00 00 00 3C` | 60 |
+| `0x300` | `00 00 00 5A` | 90 |
+| `0x400` | `00 00 00 32` | 50 |
+| `0x500` | `00 00 00 00` | 0 |
+| `0x600` | `00 00 00 01` | 1 |
+
+Each received frame contained four data bytes, as indicated by `[4]` in the output.
+
+![CAN Frame Verification with candump](screenshots/step-14-candump-verification.png)
+
+Screenshot 27: Kali Linux terminal displaying the six CAN frames captured on `vcan0` using `candump -n 6 vcan0`.
+
+### Result
+
+The preliminary CAN communication test was successful. All six frames from the existing ECU simulator were visible on the `vcan0` virtual CAN interface, and their payloads matched the values configured in the source code.
+
+The current implementation still uses the earlier CAN IDs and four-byte payloads. These will be updated in Step 15 to follow the finalized CAN protocol.
+
+## Step 14.14: Verify the ECU Simulator Files
+
+In this step, the ECU simulator source file, compiled executable, and backup source file were checked to confirm that the expected files were present in the Kali Linux development directory.
+
+### Step 14.14.1: List the ECU Simulator Files
+
+The following commands were executed:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+ls -lh ecu_simulator.c ecu_simulator ecu_simulator_step8_backup.c
+```
+
+The terminal returned the following output:
+
+```text
+-rwxrwxr-x 1 kali kali  17K Oct 12 07:13 ecu_simulator
+-rw-rw-r-- 1 kali kali 2.7K Oct 10 02:29 ecu_simulator.c
+-rw-rw-r-- 1 kali kali  887 Oct 10 02:12 ecu_simulator_step8_backup.c
+```
+
+![ECU Simulator Files in Kali Linux](screenshots/step-14-ecu-simulator-files.png)
+
+Screenshot 28: Kali Linux terminal showing the source file, compiled executable, and preserved backup file with their sizes and permissions.
+
+### Result
+
+The verification confirmed that all three expected files were present:
+
+- `ecu_simulator.c` — the current ECU simulator source file.
+- `ecu_simulator` — the compiled executable.
+- `ecu_simulator_step8_backup.c` — the backup source file preserved from the earlier implementation.
+
+The source file will be updated to implement the finalized CAN protocol in Step 15. The backup file will be retained as a reference.
+
+## Step 14.15: Verify the ECU Simulator Directory Structure
+
+In this step, the contents of the `ecu_sim/` directory in the local CAN-Sentinel repository were verified using Windows PowerShell.
+
+### Step 14.15.1: List the Directory Contents
+
+The following commands were executed from the local repository:
+
+```powershell
+cd D:\Study\Projects\CAN-Sentinel
+Get-ChildItem .\ecu_sim
+```
+
+The terminal returned the following output:
+
+```text
+Directory: D:\Study\Projects\CAN-Sentinel\ecu_sim
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+-a----         06-10-2026  11:14 PM              0 .gitkeep
+-a----         11-10-2026  11:23 PM           2701 ecu_simulator.c
+-a----         12-10-2026  01:34 PM           2065 README.md
+```
+
+![ECU Simulator Directory in Windows](screenshots/step-14-ecu-simulator-directory-verification.png)
+
+Screenshot 29: Windows PowerShell showing the contents of the local `ecu_sim/` directory, including `.gitkeep`, `ecu_simulator.c`, and `README.md`.
+
+### Result
+
+The verification confirmed that the Windows `ecu_sim/` directory contains the following files:
+
+- `.gitkeep` — preserves the directory in Git.
+- `ecu_simulator.c` — the ECU simulator source file.
+- `README.md` — contains the build and run instructions.
+
+The directory structure is in place. The source file will be updated to match the finalized CAN protocol before the final implementation is transferred and validated.
+
+## Step 14.16: Verify the Git Working Tree
+
+In this step, the Git working tree was checked to identify untracked or modified files in the local CAN-Sentinel repository.
+
+### Step 14.16.1: Check the Repository Status
+
+The following commands were executed in Windows PowerShell:
+
+```powershell
+cd D:\Study\Projects\CAN-Sentinel
+git status --short
+```
+
+The terminal returned the following output:
+
+```text
+?? ecu_sim/README.md
+?? ecu_sim/ecu_simulator.c
+```
+
+![ECU Simulator Git Working Tree Status](screenshots/step-14-git-status-verification.png)
+
+Screenshot 30: Windows PowerShell displaying the Git working tree status, with `ecu_sim/README.md` and `ecu_sim/ecu_simulator.c` listed as untracked files.
+
+### Result
+
+Git identified two untracked files:
+
+- `ecu_sim/README.md` — the ECU simulator build and run guide.
+- `ecu_sim/ecu_simulator.c` — the ECU simulator source file.
+
+The `??` status indicates that these files are not yet tracked by Git. No modified tracked files were reported by this command.
+
+These files will be reviewed and committed separately according to the project's Git workflow. The final protocol implementation will be updated and validated before the source file is considered ready.
+
+## Step 15: Finalize the CAN Protocol
+
+The purpose of this step is to finalize the CAN identifiers, transmission periods, payload layouts, and data lengths used by the six ECU simulators in the CAN-Sentinel project.
+
+The protocol is based on the ECU baseline table defined in `docs/week1_design.md` on the team's `main` branch. The finalized configuration will be implemented in the C-based SocketCAN ECU simulator running on Kali Linux.
+
+### Step 15.1: Open the CAN-Sentinel Repository in Visual Studio Code
+
+Open the existing CAN-Sentinel repository in Visual Studio Code on Windows.
+
+Repository location:
+
+```text
+D:\Study\Projects\CAN-Sentinel
+```
+
+Open the integrated terminal and verify the current working directory and Git branch.
+
+Execute:
+
+```powershell
+git branch --show-current
+git status --short
+```
+
+The current branch must be `member-1`. All project changes for this task must remain on the member's own branch.
+
+Output:
+
+```text
+member-1
+?? ecu_sim/README.md
+?? ecu_sim/ecu_simulator.c
+```
+
+The status output above records the untracked files observed during this verification. The exact output of `git status --short` may change as files are added or committed.
+
+### Step 15.2: Fetch the Latest Remote Repository Information
+
+Fetch the latest branch information from GitHub so that the remote-tracking reference for the team's `main` branch is up to date.
+
+Execute:
+
+```powershell
+git fetch origin
+```
+
+Expected output:
+
+```text
+From https://github.com/abinayafranciscaep/CAN-Sentinel
+   ...
+```
+
+The commit identifiers and branch-update details depend on the remote repository state. A successful fetch updates the local remote-tracking information without switching branches or merging changes into the current branch.
+
+### Step 15.3: Retrieve the Team's CAN Protocol Design
+
+Display the team's CAN protocol design document directly from the remote `main` branch.
+
+Execute:
+
+```powershell
+git show origin/main:docs/week1_design.md
+```
+
+This command displays the version of `docs/week1_design.md` available on `origin/main`, even if the file has not been checked out into the local working tree.
+
+To locate the ECU baseline table specifically, execute:
+
+```powershell
+git show origin/main:docs/week1_design.md | Select-String -Pattern '^## 2\.' -Context 0,40
+```
+
+The retrieved ECU baseline table specifies the following identifiers, periods, data lengths, and payload layouts:
+
+| CAN ID | ECU / Signal | Period | DLC | Payload layout |
+|---|---|---|---:|---|
+| `0x0A0` | Brake | 20 ms | 8 | Byte 0: brake pressure (0–100); Byte 1: brake switch (0/1); Byte 7: rolling counter |
+| `0x0B0` | Steering | 10 ms | 8 | Bytes 0–1: signed steering angle in 0.1-degree units; Byte 7: rolling counter |
+| `0x100` | Engine RPM | 10 ms | 8 | Bytes 0–1: RPM (0–8000); Byte 7: rolling counter |
+| `0x200` | Vehicle speed | 20 ms | 8 | Byte 0: speed in km/h (0–250); Byte 7: rolling counter |
+| `0x300` | Engine temperature | 100 ms | 8 | Byte 0: coolant temperature encoded with a −40°C offset; Byte 7: rolling counter |
+| `0x600` | Infotainment heartbeat | 100 ms | 8 | Byte 0: status; Byte 7: rolling counter |
+
+The design document also specifies the following diagnostic identifier:
+
+| CAN ID | ECU / Signal | Period | DLC | Payload layout |
+|---|---|---|---:|---|
+| `0x7DF` | Diagnostic request | Event-driven | 8 | Standard OBD-II / UDS diagnostic request format |
+
+The `0x7DF` diagnostic identifier is event-driven and is not one of the six periodic ECU frames in the normal-traffic simulator. It will therefore not be included in the six-frame periodic baseline.
+
+![Week 1 CAN Protocol Design](screenshots/step-15-week1-can-protocol-design.png)
+
+Screenshot 31: Terminal displaying the ECU baseline table retrieved from `origin/main:docs/week1_design.md`, including CAN identifiers, transmission periods, DLC values, and payload layouts.
+
+### Result
+
+The CAN protocol requirements were identified from the team's Week 1 design document. The six periodic ECU messages must use the specified CAN identifiers, transmission intervals, and DLC of 8, with their signal payloads encoded according to Section 2 and rolling counters stored in byte 7.
+
+The brake (`0x0A0`) and steering (`0x0B0`) messages have the lowest identifiers among the six periodic ECU messages, giving them higher CAN arbitration priority than messages with higher identifiers.
+
+The `0x7DF` diagnostic request remains separate from the six-message periodic baseline. These requirements will guide the ECU simulator implementation and subsequent verification.
+
+### Step 15.4: Review the Existing Simulator Implementation
+
+Before modifying the C source code, the existing implementation was reviewed in Kali Linux.
+
+The following commands were executed in the Kali Linux terminal:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+ls -lh
+```
+
+The existing directory contains the ECU simulator source file, its previously compiled executable, and an earlier backup.
+
+The previous implementation transmitted six CAN frames using the identifiers `0x100`, `0x200`, `0x300`, `0x400`, `0x500`, and `0x600`. Those frames used a four-byte payload and were transmitted once rather than at the periodic intervals required by the team's finalized protocol.
+
+Consequently, the previous implementation does not match the finalized baseline. The source code must be updated to use the agreed CAN identifiers, eight-byte payloads, rolling counters, and transmission periods.
+
+### Step 15.5: Define the Finalized CAN Protocol Requirements
+
+The following requirements will govern the updated ECU simulator:
+
+1. Use the six periodic CAN identifiers specified in the team's baseline design.
+2. Set the data length code (DLC) to 8 for all six ECU frames.
+3. Transmit brake frames every 20 ms.
+4. Transmit steering frames every 10 ms.
+5. Transmit engine RPM frames every 10 ms.
+6. Transmit vehicle-speed frames every 20 ms.
+7. Transmit engine-temperature frames every 100 ms.
+8. Transmit infotainment heartbeat frames every 100 ms.
+9. Place the rolling counter in byte 7 of every periodic ECU frame, incrementing it from 0 to 255 and wrapping back to 0.
+10. Encode multibyte steering-angle and RPM values in bytes 0 and 1 according to the implementation's defined byte order.
+11. Encode engine temperature using a −40°C offset. For example, a temperature of 90°C is represented by a raw byte value of 130.
+12. Keep the diagnostic identifier `0x7DF` outside the periodic normal-traffic baseline because it is intended for event-driven diagnostic requests.
+
+The brake and steering ECUs use the lower CAN identifiers `0x0A0` and `0x0B0`, respectively. In CAN arbitration, a lower numerical identifier has higher priority when competing frames are transmitted simultaneously.
+
+Realistic signal variation, timing jitter, and final transmission-rate tuning will be handled in the following development steps.
+
+### Step 15.6: Confirm the Final CAN Protocol
+
+The following table summarizes the protocol to be implemented in the updated C-based SocketCAN simulator.
+
+| ECU | CAN ID | Transmission period | DLC | Payload definition |
+|---|---|---|---:|---|
+| Brake | `0x0A0` | 20 ms | 8 | Byte 0: pressure (0–100); Byte 1: switch (0/1); Byte 7: counter |
+| Steering | `0x0B0` | 10 ms | 8 | Bytes 0–1: signed steering angle in 0.1-degree units; Byte 7: counter |
+| Engine RPM | `0x100` | 10 ms | 8 | Bytes 0–1: RPM (0–8000); Byte 7: counter |
+| Vehicle speed | `0x200` | 20 ms | 8 | Byte 0: speed in km/h (0–250); Byte 7: counter |
+| Engine temperature | `0x300` | 100 ms | 8 | Byte 0: temperature with −40°C offset; Byte 7: counter |
+| Infotainment heartbeat | `0x600` | 100 ms | 8 | Byte 0: status; Byte 7: counter |
+
+The six periodic transmission rates give the following baseline frame-rate calculation:
+
+- Brake: 1,000 ms ÷ 20 ms = 50 frames per second
+- Steering: 1,000 ms ÷ 10 ms = 100 frames per second
+- Engine RPM: 1,000 ms ÷ 10 ms = 100 frames per second
+- Vehicle speed: 1,000 ms ÷ 20 ms = 50 frames per second
+- Engine temperature: 1,000 ms ÷ 100 ms = 10 frames per second
+- Infotainment heartbeat: 1,000 ms ÷ 100 ms = 10 frames per second
+
+Total expected baseline transmission rate:
+
+\[
+50 + 100 + 100 + 50 + 10 + 10 = 320
+\]
+
+The target is therefore **320 CAN frames per second** across the six periodic ECU messages.
+
+### Result
+
+The protocol specification has been confirmed for the six periodic ECU messages, including their CAN identifiers, transmission intervals, eight-byte payloads, and rolling counters in byte 7.
+
+The diagnostic identifier `0x7DF` remains outside the periodic normal-traffic baseline. The expected aggregate transmission rate is 320 frames per second under the specified nominal periods.
+
+This step confirms the protocol specification. Successful compilation, frame transmission, DLC verification, and transmission-rate measurements must be recorded after the updated implementation has been tested in Kali Linux.
+
+### Step 15.7: Back Up the Existing Source Code
+
+Before modifying the ECU simulator, create a backup of the existing source file. This preserves the previous implementation and allows recovery if required.
+
+Navigate to the ECU simulator directory in Kali Linux and execute:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+cp ecu_simulator.c ecu_simulator_pre_protocol.c
+ls -lh ecu_simulator.c ecu_simulator_pre_protocol.c
+```
+
+The backup file `ecu_simulator_pre_protocol.c` preserves the source code that existed before the protocol update.
+
+![ECU Simulator Source Code Backup](screenshots/step-15-source-code-backup.png)
+
+Screenshot 32: Verification of the original ECU simulator source file and its backup.
+
+### Step 15.8: Open the Source Code for Editing
+
+Open the ECU simulator source file using the Nano text editor:
+
+```bash
+nano ~/CAN-Sentinel/ecu-simulator/ecu_simulator.c
+```
+
+Replace the existing source code with the updated SocketCAN implementation that follows the finalized CAN protocol. Save the file using `Ctrl + O`, press Enter to confirm, and exit using `Ctrl + X`.
+
+The updated implementation introduces the six agreed CAN identifiers, eight-byte CAN frames, periodic transmission, and rolling counters in byte 7.
+
+### Step 15.9: Verify the Updated Source Code
+
+Confirm that the updated protocol message is present in the source file.
+
+Execute:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+grep -n "Protocol: six periodic ECU frames" ecu_simulator.c
+```
+
+Actual terminal output:
+
+```text
+165:    printf("Protocol: six periodic ECU frames, DLC 8\n");
+```
+
+This confirms that the source file contains the updated protocol startup message.
+
+### Step 15.10: Compile the Updated ECU Simulator
+
+Compile the updated C source code using GCC with additional compiler warning flags.
+
+Execute:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+gcc -Wall -Wextra -o ecu_simulator ecu_simulator.c
+```
+
+Actual terminal output:
+
+```text
+┌──(kali㉿kali)-[~/CAN-Sentinel/ecu-simulator]
+└─$ cd ~/CAN-Sentinel/ecu-simulator
+gcc -Wall -Wextra -o ecu_simulator ecu_simulator.c
+```
+
+The command returned to the shell prompt without displaying compiler errors or warnings. This confirms that compilation completed successfully.
+
+### Step 15.11: Execute the Updated ECU Simulator
+
+Run the newly compiled executable:
+
+```bash
+./ecu_simulator
+```
+
+Actual terminal output:
+
+```text
+CAN-Sentinel ECU Simulator Started
+CAN interface: vcan0
+Protocol: six periodic ECU frames, DLC 8
+Press Ctrl+C to stop.
+```
+
+The simulator remained running and continued transmitting periodic CAN frames instead of exiting after sending six frames.
+
+![Updated ECU Simulator Execution](screenshots/step-15-updated-ecu-simulator-execution.png)
+
+Screenshot 33: The updated ECU simulator starts on `vcan0`, reports the finalized protocol with DLC 8, and remains active for periodic CAN transmission.
+
+### Step 15.12: Verify CAN Frame Transmission
+
+Keep the ECU simulator running in one Kali Linux terminal. Open a second terminal and use `candump` to inspect the transmitted CAN traffic.
+
+Execute:
+
+```bash
+candump -n 12 vcan0
+```
+
+Actual terminal output:
+
+```text
+vcan0  0A0   [8]  32 00 00 00 00 00 00 9D
+vcan0  0B0   [8]  00 00 00 00 00 00 00 3A
+vcan0  100   [8]  05 DC 00 00 00 00 00 3A
+vcan0  200   [8]  3C 00 00 00 00 00 00 9D
+vcan0  0B0   [8]  00 00 00 00 00 00 00 3B
+vcan0  100   [8]  05 DC 00 00 00 00 00 3B
+vcan0  0A0   [8]  32 00 00 00 00 00 00 9E
+vcan0  0B0   [8]  00 00 00 00 00 00 00 3C
+vcan0  100   [8]  05 DC 00 00 00 00 00 3C
+vcan0  200   [8]  3C 00 00 00 00 00 00 9E
+vcan0  0B0   [8]  00 00 00 00 00 00 00 3D
+vcan0  100   [8]  05 DC 00 00 00 00 00 3D
+```
+
+The captured frames confirm that the brake, steering, engine RPM, and vehicle-speed ECUs are transmitting using their finalized CAN identifiers. All observed frames have a DLC of 8.
+
+The final byte of the observed frames contains the rolling counter. For example, the steering and engine RPM counters increase from `0x3A` to `0x3D`, while the brake and vehicle-speed counters increase from `0x9D` to `0x9E`.
+
+The engine RPM payload `05 DC` represents 1500 RPM, and the vehicle-speed payload `3C` represents 60 km/h.
+
+![CAN Frame Transmission Verification](screenshots/step-15-candump-frame-verification.png)
+
+Screenshot 34: `candump` output showing the finalized CAN identifiers, eight-byte frames, payload values, and incrementing rolling counters.
+
+### Step 15.13: Verify All Six ECU Frames
+
+After starting the updated ECU simulator, verify that all six periodic ECU messages are transmitted using the finalized CAN identifiers and eight-byte payloads.
+
+Keep the ECU simulator running in the first Kali Linux terminal. Open a second terminal and execute:
+
+```bash
+candump -n 40 vcan0
+```
+
+The `candump` utility captures up to 40 CAN frames from the `vcan0` virtual CAN interface. This allows the slower engine-temperature and infotainment messages, which are transmitted every 100 ms, to appear in the capture.
+
+Actual terminal output:
+
+```text
+vcan0  0B0   [8]  00 00 00 00 00 00 00 13
+vcan0  100   [8]  05 DC 00 00 00 00 00 13
+vcan0  0A0   [8]  32 00 00 00 00 00 00 8A
+vcan0  0B0   [8]  00 00 00 00 00 00 00 14
+vcan0  100   [8]  05 DC 00 00 00 00 00 14
+vcan0  200   [8]  3C 00 00 00 00 00 00 8A
+vcan0  300   [8]  82 00 00 00 00 00 00 82
+vcan0  600   [8]  01 00 00 00 00 00 00 82
+vcan0  0B0   [8]  00 00 00 00 00 00 00 15
+vcan0  100   [8]  05 DC 00 00 00 00 00 15
+vcan0  0A0   [8]  32 00 00 00 00 00 00 8B
+vcan0  0B0   [8]  00 00 00 00 00 00 00 16
+vcan0  100   [8]  05 DC 00 00 00 00 00 16
+vcan0  200   [8]  3C 00 00 00 00 00 00 8B
+vcan0  0B0   [8]  00 00 00 00 00 00 00 17
+vcan0  100   [8]  05 DC 00 00 00 00 00 17
+vcan0  0A0   [8]  32 00 00 00 00 00 00 8C
+vcan0  0B0   [8]  00 00 00 00 00 00 00 18
+vcan0  100   [8]  05 DC 00 00 00 00 00 18
+vcan0  200   [8]  3C 00 00 00 00 00 00 8C
+vcan0  0B0   [8]  00 00 00 00 00 00 00 19
+vcan0  100   [8]  05 DC 00 00 00 00 00 19
+vcan0  0A0   [8]  32 00 00 00 00 00 00 8D
+vcan0  0B0   [8]  00 00 00 00 00 00 00 1A
+vcan0  100   [8]  05 DC 00 00 00 00 00 1A
+vcan0  200   [8]  3C 00 00 00 00 00 00 8D
+vcan0  0B0   [8]  00 00 00 00 00 00 00 1B
+vcan0  100   [8]  05 DC 00 00 00 00 00 1B
+vcan0  0A0   [8]  32 00 00 00 00 00 00 8E
+vcan0  0B0   [8]  00 00 00 00 00 00 00 1C
+vcan0  100   [8]  05 DC 00 00 00 00 00 1C
+vcan0  200   [8]  3C 00 00 00 00 00 00 8E
+vcan0  0B0   [8]  00 00 00 00 00 00 00 1D
+vcan0  100   [8]  05 DC 00 00 00 00 00 1D
+vcan0  0A0   [8]  32 00 00 00 00 00 00 8F
+vcan0  0B0   [8]  00 00 00 00 00 00 00 1E
+vcan0  100   [8]  05 DC 00 00 00 00 00 1E
+vcan0  200   [8]  3C 00 00 00 00 00 00 8F
+vcan0  300   [8]  82 00 00 00 00 00 00 83
+vcan0  600   [8]  01 00 00 00 00 00 00 83
+```
+
+The captured traffic confirms that all six expected CAN identifiers are present.
+
+| ECU | CAN ID | Expected DLC | Verification |
+|---|---|---:|---|
+| Brake | `0x0A0` | 8 | Confirmed |
+| Steering | `0x0B0` | 8 | Confirmed |
+| Engine RPM | `0x100` | 8 | Confirmed |
+| Vehicle speed | `0x200` | 8 | Confirmed |
+| Engine temperature | `0x300` | 8 | Confirmed |
+| Infotainment heartbeat | `0x600` | 8 | Confirmed |
+
+Every observed frame uses DLC 8. The final byte contains a rolling counter that increments independently for each ECU. For example, the steering and engine RPM counters increase from `0x13` to `0x1E`, while the brake and vehicle-speed counters increase from `0x8A` to `0x8F`. The temperature and infotainment counters increase from `0x82` to `0x83`.
+
+The payloads also match the configured baseline values:
+
+- **Brake:** `0x32` represents a pressure value of 50; byte 1 is `0`, indicating that the brake switch is off.
+- **Steering:** `0x0000` represents a steering angle of 0.0 degrees.
+- **Engine RPM:** `0x05DC` represents 1500 RPM.
+- **Vehicle speed:** `0x3C` represents 60 km/h.
+- **Engine temperature:** `0x82` represents a raw value of 130, corresponding to 90°C with the configured +40 encoding offset.
+- **Infotainment:** `0x01` represents status 1.
+
+The capture verifies that all six ECU messages are being transmitted with the expected CAN identifiers, DLC values, and rolling-counter placement. It confirms protocol-format compliance for the observed frames; precise transmission intervals and the aggregate rate of approximately 320 frames per second will be evaluated separately.
+
+![Verification of All Six ECU CAN Frames](screenshots/step-15-all-six-ecu-frames-verification.png)
+
+Screenshot 35: `candump` output showing all six finalized CAN identifiers, eight-byte frames, baseline payloads, and rolling counters.
+
+### Step 15.13 Result
+
+The verification was successful. All six periodic ECU frames were observed on `vcan0`, and every captured frame used the expected eight-byte payload format.
+
+The finalized CAN protocol is now verified at the frame-format level. The next development step is to introduce realistic ECU signal variations and timing jitter.
+
+
+## Step 16: Implement Realistic ECU Signal Values and Timing Jitter
+
+After finalizing the CAN communication protocol in Step 15, the next step is to update the ECU simulator to generate more realistic vehicle signal values and introduce small timing variations. These improvements will help produce more representative normal CAN traffic for the CAN-Sentinel intrusion detection system.
+
+The simulator retains the six agreed CAN identifiers, eight-byte data frames, rolling counters, and nominal transmission periods defined in `docs/week1_design.md`.
+
+### Step 16.1: Preserve the Finalized Step 15 Implementation
+
+Before modifying the source code, preserve a backup of the verified Step 15 implementation. This allows the finalized protocol version to be recovered if any problems occur during development.
+
+Navigate to the simulator directory:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+```
+
+Create a backup of the current source file:
+
+```bash
+cp ecu_simulator.c ecu_simulator_step15_backup.c
+```
+
+Verify that both files exist:
+
+```bash
+ls -lh ecu_simulator.c ecu_simulator_step15_backup.c
+```
+
+The backup preserves the Step 15 source code, while `ecu_simulator.c` remains the working file for Step 16.
+
+### Step 16.2: Define the Realistic Signal Requirements
+
+The simulator is updated to represent the following vehicle signals:
+
+| CAN ID | ECU signal | Nominal period | Signal behavior |
+|---|---|---:|---|
+| `0x0A0` | Brake | 20 ms | Brake pressure and brake switch state |
+| `0x0B0` | Steering | 10 ms | Signed steering angle |
+| `0x100` | Engine RPM | 10 ms | Gradually changing engine speed |
+| `0x200` | Vehicle speed | 20 ms | Gradually changing vehicle speed |
+| `0x300` | Engine temperature | 100 ms | Coolant temperature with a +40 offset |
+| `0x600` | Infotainment | 100 ms | Infotainment status |
+
+All six messages use a DLC of 8 bytes, with the rolling counter stored in byte 7.
+
+The simulator uses bounded signal values to avoid unrealistic or out-of-range values. Timing jitter of approximately ±1 ms is introduced around each ECU's nominal transmission period.
+
+### Step 16.3: Open the ECU Simulator Source File
+
+Open the existing source file in Nano:
+
+```bash
+nano ~/CAN-Sentinel/ecu-simulator/ecu_simulator.c
+```
+
+The existing source file is edited in place so that the finalized protocol implementation can be extended without changing the project directory structure.
+
+### Step 16.4: Replace the Existing Code with the Updated Implementation
+
+Replace the contents of `ecu_simulator.c` with the following complete C program.
+
+```c
+#include <errno.h>
+#include <linux/can.h>
+#include <linux/can/raw.h>
+#include <net/if.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
+
+#define ECU_COUNT 6
+#define DLC 8
+#define JITTER_US 1000
+
+typedef struct {
+    canid_t can_id;
+    long period_us;
+    struct timespec next_send;
+    uint8_t counter;
+} ECU;
+
+static volatile sig_atomic_t running = 1;
+
+static ECU ecus[ECU_COUNT] = {
+    {0x0A0,  20000, {0, 0}, 0},
+    {0x0B0,  10000, {0, 0}, 0},
+    {0x100,  10000, {0, 0}, 0},
+    {0x200,  20000, {0, 0}, 0},
+    {0x300, 100000, {0, 0}, 0},
+    {0x600, 100000, {0, 0}, 0}
+};
+
+static int brake_pressure = 0;
+static int brake_switch = 0;
+static int steering_angle = 0;
+static int engine_rpm = 1500;
+static int vehicle_speed = 60;
+static int engine_temp_c = 90;
+static uint8_t infotainment_status = 1;
+
+static void handle_signal(int signal_number)
+{
+    (void)signal_number;
+    running = 0;
+}
+
+static long timespec_diff_us(const struct timespec *a,
+                             const struct timespec *b)
+{
+    return (a->tv_sec - b->tv_sec) * 1000000L
+         + (a->tv_nsec - b->tv_nsec) / 1000L;
+}
+
+static struct timespec add_us(struct timespec t, long us)
+{
+    t.tv_nsec += (us % 1000000L) * 1000L;
+    t.tv_sec += us / 1000000L;
+
+    if (t.tv_nsec >= 1000000000L) {
+        t.tv_sec++;
+        t.tv_nsec -= 1000000000L;
+    }
+
+    if (t.tv_nsec < 0) {
+        t.tv_sec--;
+        t.tv_nsec += 1000000000L;
+    }
+
+    return t;
+}
+
+static long random_jitter_us(void)
+{
+    return (long)(rand() % (2 * JITTER_US + 1)) - JITTER_US;
+}
+
+static int clamp_int(int value, int minimum, int maximum)
+{
+    if (value < minimum) return minimum;
+    if (value > maximum) return maximum;
+    return value;
+}
+
+static void update_signals(void)
+{
+    engine_rpm += (rand() % 101) - 50;
+    engine_rpm = clamp_int(engine_rpm, 800, 4000);
+
+    vehicle_speed += (rand() % 5) - 2;
+    vehicle_speed = clamp_int(vehicle_speed, 0, 130);
+
+    steering_angle += (rand() % 21) - 10;
+    steering_angle = clamp_int(steering_angle, -450, 450);
+
+    if (rand() % 100 < 8) {
+        brake_switch = !brake_switch;
+    }
+
+    if (brake_switch) {
+        brake_pressure += 5 + rand() % 11;
+    } else {
+        brake_pressure -= 2 + rand() % 9;
+    }
+
+    brake_pressure = clamp_int(brake_pressure, 0, 100);
+
+    engine_temp_c += (rand() % 3) - 1;
+    engine_temp_c = clamp_int(engine_temp_c, 80, 105);
+
+    if (rand() % 1000 == 0) {
+        infotainment_status = (uint8_t)(rand() % 2);
+    }
+}
+
+static void prepare_frame(const ECU *ecu, struct can_frame *frame)
+{
+    memset(frame, 0, sizeof(*frame));
+    frame->can_id = ecu->can_id;
+    frame->can_dlc = DLC;
+
+    switch (ecu->can_id) {
+        case 0x0A0:
+            frame->data[0] = (uint8_t)brake_pressure;
+            frame->data[1] = (uint8_t)brake_switch;
+            break;
+
+        case 0x0B0: {
+            int16_t angle = (int16_t)steering_angle;
+            frame->data[0] =
+                (uint8_t)(((uint16_t)angle >> 8) & 0xFF);
+            frame->data[1] =
+                (uint8_t)((uint16_t)angle & 0xFF);
+            break;
+        }
+
+        case 0x100:
+            frame->data[0] =
+                (uint8_t)((engine_rpm >> 8) & 0xFF);
+            frame->data[1] = (uint8_t)(engine_rpm & 0xFF);
+            break;
+
+        case 0x200:
+            frame->data[0] = (uint8_t)vehicle_speed;
+            break;
+
+        case 0x300:
+            frame->data[0] = (uint8_t)(engine_temp_c + 40);
+            break;
+
+        case 0x600:
+            frame->data[0] = infotainment_status;
+            break;
+
+        default:
+            break;
+    }
+
+    frame->data[7] = ecu->counter;
+}
+
+static int send_frame(int socket_fd, ECU *ecu)
+{
+    struct can_frame frame;
+    prepare_frame(ecu, &frame);
+
+    ssize_t bytes_sent = write(socket_fd, &frame, sizeof(frame));
+
+    if (bytes_sent != (ssize_t)sizeof(frame)) {
+        if (bytes_sent < 0) {
+            perror("CAN frame transmission failed");
+        } else {
+            fprintf(stderr, "Incomplete CAN frame transmission\n");
+        }
+        return -1;
+    }
+
+    ecu->counter++;
+    return 0;
+}
+
+int main(void)
+{
+    int socket_fd;
+    struct ifreq interface_request;
+    struct sockaddr_can address;
+
+    srand((unsigned int)time(NULL));
+    signal(SIGINT, handle_signal);
+    signal(SIGTERM, handle_signal);
+
+    socket_fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
+    if (socket_fd < 0) {
+        perror("Failed to create CAN socket");
+        return EXIT_FAILURE;
+    }
+
+    memset(&interface_request, 0, sizeof(interface_request));
+    strncpy(interface_request.ifr_name, "vcan0",
+            sizeof(interface_request.ifr_name) - 1);
+
+    if (ioctl(socket_fd, SIOCGIFINDEX, &interface_request) < 0) {
+        perror("Failed to obtain vcan0 interface index");
+        close(socket_fd);
+        return EXIT_FAILURE;
+    }
+
+    memset(&address, 0, sizeof(address));
+    address.can_family = AF_CAN;
+    address.can_ifindex = interface_request.ifr_ifindex;
+
+    if (bind(socket_fd, (struct sockaddr *)&address,
+             sizeof(address)) < 0) {
+        perror("Failed to bind CAN socket to vcan0");
+        close(socket_fd);
+        return EXIT_FAILURE;
+    }
+
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
+        perror("Failed to read monotonic clock");
+        close(socket_fd);
+        return EXIT_FAILURE;
+    }
+
+    for (int i = 0; i < ECU_COUNT; i++) {
+        ecus[i].next_send = add_us(now, random_jitter_us());
+    }
+
+    printf("CAN-Sentinel ECU Simulator Started\n");
+    printf("CAN interface: vcan0\n");
+    printf("Protocol: six periodic ECU frames, DLC 8\n");
+    printf("Signal simulation: enabled\n");
+    printf("Timing jitter: approximately +/-1 ms\n");
+    printf("Press Ctrl+C to stop.\n");
+    fflush(stdout);
+
+    while (running) {
+        if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
+            perror("Failed to read monotonic clock");
+            break;
+        }
+
+        for (int i = 0; i < ECU_COUNT && running; i++) {
+            if (timespec_diff_us(&now, &ecus[i].next_send) >= 0) {
+                update_signals();
+
+                if (send_frame(socket_fd, &ecus[i]) < 0) {
+                    running = 0;
+                    break;
+                }
+
+                if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
+                    perror("Failed to read monotonic clock");
+                    running = 0;
+                    break;
+                }
+
+                long interval = ecus[i].period_us
+                              + random_jitter_us();
+
+                ecus[i].next_send = add_us(now, interval);
+            }
+        }
+
+        if (running) {
+            struct timespec earliest = ecus[0].next_send;
+
+            for (int i = 1; i < ECU_COUNT; i++) {
+                if (timespec_diff_us(&ecus[i].next_send,
+                                     &earliest) < 0) {
+                    earliest = ecus[i].next_send;
+                }
+            }
+
+            if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
+                perror("Failed to read monotonic clock");
+                break;
+            }
+
+            long wait_us = timespec_diff_us(&earliest, &now);
+
+            if (wait_us > 0) {
+                struct timespec delay = {
+                    .tv_sec = wait_us / 1000000L,
+                    .tv_nsec = (wait_us % 1000000L) * 1000L
+                };
+
+                while (nanosleep(&delay, &delay) < 0
+                       && errno == EINTR && running) {
+                    /* Resume sleep after an interrupt. */
+                }
+            }
+        }
+    }
+
+    close(socket_fd);
+    printf("\nCAN-Sentinel ECU Simulator stopped.\n");
+    return EXIT_SUCCESS;
+}
+```
+
+The implementation introduces the following changes:
+
+- Dynamic brake pressure and brake switch state.
+- Gradual changes in steering angle, engine RPM, and vehicle speed.
+- Small coolant temperature variations and an infotainment status field.
+- Per-ECU transmission scheduling with approximately ±1 ms jitter.
+- Eight-byte CAN frames with independent rolling counters in byte 7.
+- Graceful termination using `Ctrl+C`.
+
+### Step 16.5: Save the Updated Source File
+
+After replacing the code in Nano, save the file using these keys:
+
+1. Press `Ctrl + O` to write the file.
+2. Press Enter to confirm the filename.
+3. Press `Ctrl + X` to exit Nano.
+
+The updated source file is now ready for the next verification stage.
+
+Verification status: The source code has been entered and saved. Compilation, signal behavior, CAN frame contents, and the actual transmission rate have not yet been verified. These checks must be completed before using the simulator to generate normal-traffic training datasets.
+
+## Step 16.5: Verify the Updated Source File
+
+After replacing the original simulator code, verify that the updated source file and the Step 15 backup exist. This confirms that the previous implementation is preserved before compilation and testing.
+
+### Step 16.5.1: Verify the Source and Backup Files
+
+Execute the following commands in Kali Linux:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+ls -lh ecu_simulator.c ecu_simulator_step15_backup.c
+```
+
+The terminal returned the following output:
+
+```text
+-rw-rw-r-- 1 kali kali 8.2K Oct 13 05:13 ecu_simulator.c
+-rw-rw-r-- 1 kali kali 5.5K Oct 13 05:10 ecu_simulator_step15_backup.c
+```
+
+The output confirms that the updated `ecu_simulator.c` source file and the preserved `ecu_simulator_step15_backup.c` backup are present in the simulator directory.
+
+### Step 16.5.2: Verify the CAN Protocol and Timing Configuration
+
+Execute the following command to inspect the CAN identifiers, nominal transmission periods, jitter configuration, and signal-handling functions:
+
+```bash
+grep -nE '0x0A0|0x0B0|0x100|0x200|0x300|0x600|JITTER_US|update_signals|prepare_frame' ecu_simulator.c
+```
+
+The terminal returned the following output:
+
+```text
+19:#define JITTER_US 1000
+31:    {0x0A0,  20000, {0, 0}, 0},  /* Brake */
+32:    {0x0B0,  10000, {0, 0}, 0},  /* Steering */
+33:    {0x100,  10000, {0, 0}, 0},  /* Engine RPM */
+34:    {0x200,  20000, {0, 0}, 0},  /* Vehicle speed */
+35:    {0x300, 100000, {0, 0}, 0},  /* Engine temperature */
+36:    {0x600, 100000, {0, 0}, 0}   /* Infotainment */
+80:    return (long)(rand() % (2 * JITTER_US + 1)) - JITTER_US;
+90:static void update_signals(void)
+127:static void prepare_frame(const ECU *ecu, struct can_frame *frame)
+134:        case 0x0A0:
+139:        case 0x0B0: {
+146:        case 0x100:
+151:        case 0x200:
+155:        case 0x300:
+160:        case 0x600:
+174:    prepare_frame(ecu, &frame);
+255:                update_signals();
+```
+
+The output confirms that the source contains all six finalized CAN identifiers, their configured nominal transmission periods, the jitter constant, and the functions responsible for updating signals and preparing CAN frames.
+
+![Verification of the CAN Protocol and Timing Configuration](screenshots/step-16-protocol-and-timing-configuration.png)
+
+Screenshot 39: Terminal output showing the six CAN identifiers, nominal transmission periods, timing jitter configuration, and signal-processing functions in `ecu_simulator.c`.
+
+At this stage, the source configuration has been inspected, but successful compilation and runtime behavior have not yet been verified.
+
+## Step 16.5: Run the Updated ECU Simulator and Verify Signal Variation
+
+After compiling the updated `ecu_simulator.c` source file successfully, run the simulator to verify that all six ECUs transmit eight-byte CAN frames with varying signal values and independent rolling counters.
+
+### Step 16.5.1: Start the ECU Simulator
+
+Navigate to the ECU simulator directory and execute the compiled program:
+
+```bash
+cd ~/CAN-Sentinel/ecu-simulator
+./ecu_simulator
+```
+
+The simulator displays the following startup output:
+
+```text
+CAN-Sentinel ECU Simulator Started
+CAN interface: vcan0
+Protocol: six periodic ECU frames, DLC 8
+Signal simulation: enabled
+Timing jitter: approximately +/-1 ms
+Press Ctrl+C to stop.
+```
+
+Keep the simulator running in this terminal.
+
+### Step 16.5.2: Capture CAN Traffic
+
+Open a second Kali Linux terminal and execute:
+
+```bash
+candump -n 40 vcan0
+```
+
+The command captures 40 CAN frames from the `vcan0` virtual CAN interface.
+
+### Step 16.5.3: Verify the Captured Output
+
+The following is the actual output captured during verification:
+
+```text
+vcan0  0B0   [8]  FF 4F 00 00 00 00 00 7F
+vcan0  100   [8]  07 A6 00 00 00 00 00 7A
+vcan0  0B0   [8]  FF 55 00 00 00 00 00 80
+vcan0  100   [8]  07 7E 00 00 00 00 00 7B
+vcan0  200   [8]  80 00 00 00 00 00 00 60
+vcan0  0A0   [8]  4D 00 00 00 00 00 00 62
+vcan0  0B0   [8]  FF 5F 00 00 00 00 00 81
+vcan0  100   [8]  07 7D 00 00 00 00 00 7C
+vcan0  0B0   [8]  FF 59 00 00 00 00 00 82
+vcan0  0A0   [8]  47 00 00 00 00 00 00 63
+vcan0  100   [8]  07 A4 00 00 00 00 00 7D
+vcan0  200   [8]  81 00 00 00 00 00 00 61
+vcan0  0B0   [8]  FF 57 00 00 00 00 00 83
+vcan0  100   [8]  07 9C 00 00 00 00 00 7E
+vcan0  0B0   [8]  FF 5B 00 00 00 00 00 84
+vcan0  0A0   [8]  44 00 00 00 00 00 00 64
+vcan0  200   [8]  80 00 00 00 00 00 00 62
+vcan0  100   [8]  07 A5 00 00 00 00 00 7F
+vcan0  0B0   [8]  FF 54 00 00 00 00 00 85
+vcan0  100   [8]  07 97 00 00 00 00 00 80
+vcan0  600   [8]  01 00 00 00 00 00 00 B3
+vcan0  0A0   [8]  3C 00 00 00 00 00 00 65
+vcan0  0B0   [8]  FF 52 00 00 00 00 00 86
+vcan0  200   [8]  7F 00 00 00 00 00 00 63
+vcan0  100   [8]  07 7A 00 00 00 00 00 81
+vcan0  0B0   [8]  FF 5A 00 00 00 00 00 87
+vcan0  300   [8]  89 00 00 00 00 00 00 B3
+vcan0  100   [8]  07 4C 00 00 00 00 00 82
+vcan0  0A0   [8]  47 01 00 00 00 00 00 66
+vcan0  200   [8]  7F 00 00 00 00 00 00 64
+vcan0  0B0   [8]  FF 58 00 00 00 00 00 88
+vcan0  100   [8]  07 63 00 00 00 00 00 83
+vcan0  0B0   [8]  FF 56 00 00 00 00 00 89
+vcan0  100   [8]  07 3E 00 00 00 00 00 84
+vcan0  0A0   [8]  56 01 00 00 00 00 00 67
+vcan0  200   [8]  7F 00 00 00 00 00 00 65
+vcan0  0B0   [8]  FF 5A 00 00 00 00 00 8A
+vcan0  100   [8]  07 37 00 00 00 00 00 85
+vcan0  0B0   [8]  FF 53 00 00 00 00 00 8B
+vcan0  100   [8]  07 58 00 00 00 00 00 86
+```
+
+The captured output confirms that every frame has DLC `[8]` and that the brake, steering, engine RPM, and vehicle-speed payloads vary over time. The rolling counters in byte 7 also increment independently for each ECU.
+
+All six identifiers (`0x0A0`, `0x0B0`, `0x100`, `0x200`, `0x300`, and `0x600`) were observed in the captured traffic.
+
+### Step 16.5.4: Save the Verification Screenshot
+
+Save a screenshot of the `candump` output in the repository at:
+
+`docs/member-1/screenshots/step-16-signal-variation-verification.png`
+
+![Verification of ECU Signal Variation](screenshots/step-16-signal-variation-verification.png)
+
+Screenshot 39: `candump` output verifying all six ECU CAN identifiers, eight-byte frames, varying signal values, and independent rolling counters.
+
+### Result
+
+The updated ECU simulator compiled without warnings and successfully transmitted CAN frames with the expected identifiers and DLC. The captured output also demonstrated varying signal values and independent rolling counters. Precise timing jitter and the target rate of approximately 320 frames per second will be evaluated separately.
