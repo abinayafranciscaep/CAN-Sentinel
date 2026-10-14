@@ -302,8 +302,16 @@ int main(void)
                 }
 
                 long interval = ecus[i].period_us + random_jitter_us();
+                struct timespec next_deadline =
+                    add_us(ecus[i].next_send, interval);
 
-                ecus[i].next_send = add_us(now, interval);
+                /* Skip missed deadlines instead of accumulating drift
+                   or sending bursts of catch-up frames. */
+                while (timespec_diff_us(&now, &next_deadline) >= 0) {
+                    next_deadline = add_us(next_deadline, interval);
+                }
+
+                ecus[i].next_send = next_deadline;
             }
         }
 
