@@ -22,6 +22,7 @@
 - [Objectives](#objectives)
 - [System Architecture](#system-architecture)
 - [ECU Simulators and CAN Message Configuration](#ecu-simulators-and-can-message-configuration)
+- [Why These CAN IDs](#why-these-can-ids)
 - [Normal CAN Traffic Generation](#normal-can-traffic-generation)
 - [Role in CAN-Sentinel](#role-in-can-sentinel)
 - [Implementation Scope](#implementation-scope)
@@ -37,6 +38,10 @@
   - [Step 7: Verify Frame Format and Signal Variation](#step-7-verify-frame-format-and-signal-variation)
   - [Step 8: Validate and Tune the Transmission Rate](#step-8-validate-and-tune-the-transmission-rate)
   - [Step 9: Commit and Push the Final Source](#step-9-commit-and-push-the-final-source)
+  - [Step 10: Improve Signal Realism and Reproducibility](#step-10-improve-signal-realism-and-reproducibility)
+  - [Step 11: Record the Three 10-Minute Baseline Datasets](#step-11-record-the-three-10-minute-baseline-datasets)
+  - [Step 12: Automated Payload Tests (Week 3)](#step-12-automated-payload-tests-week-3)
+- [Known Limitations](#known-limitations)
 - [Expected Outcome](#expected-outcome)
 - [Next Steps](#next-steps)
 
@@ -100,6 +105,10 @@ The table below is the **finalized protocol** taken from the team's design docum
 > [!NOTE]
 > The early prototype in Step 3 used different identifiers for Brake (`0x400`) and Steering (`0x500`), a DLC of 4, and single-shot transmission. Those values are superseded by the table above and appear only in the Step 3 evidence.
 
+## Why These CAN IDs
+
+On a CAN bus, when two nodes transmit at the same time, the frame with the **lower identifier wins arbitration** and is sent first. Safety-critical messages therefore receive the lowest identifiers: Brake (`0x0A0`) and Steering (`0x0B0`) always win over Engine RPM (`0x100`), Vehicle Speed (`0x200`), Engine Temperature (`0x300`), and Infotainment (`0x600`). This is also why the prototype values `0x400` and `0x500` were replaced: they would have given brake and steering lower priority than the engine and speed messages.
+
 ## Normal CAN Traffic Generation
 
 Each ECU simulator runs on its own schedule. When an ECU's next transmission time is reached, the simulator updates the vehicle signals, encodes the frame, transmits it through `vcan0`, and schedules the next transmission one period later with approximately ±1 ms of timing jitter.
@@ -148,9 +157,14 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Frame format and signal variation verified with `candump` | ✅ Done |
 | Baseline rate measured: about 294–298 frames/s, 92–93 % of the 320 target | ✅ Done |
 | Shortfall diagnosed (deadline re-based on the post-transmission time) and scheduler correction compiled | ✅ Done |
-| Corrected rate verified (first capture: 3,199 frames in 10 s; exact rate and per-ID counts to be recorded) | ⏳ Pending |
+| Corrected rate verified: 319.94–320.09 frames/s over three 10-second captures (average ≈ 320.03) | ✅ Done |
+| Protocol confirmed unchanged after the scheduler correction (8.9) | ✅ Done |
 | Corrected source placed in the repository and hash-verified against the tested copy | ⏳ Pending |
-| Commit and push of final `ecu_sim/` source | ⏳ Pending |
+| Commit and push of final `ecu_sim/ecu_simulator.c`, `ecu_sim/README.md` and `ecu_sim/.gitignore` | ⏳ Pending |
+| Per-ID interval statistics (min / average / max) (8.11) | ⏳ Pending |
+| Step 10: signal realism (fixed update interval, RPM linked to speed) and optional seed | ⏳ Planned |
+| Step 11: three 10-minute baseline datasets recorded with Member 3's logger | ⏳ Planned |
+| Step 12: automated payload tests | ⏳ Planned (Week 3) |
 
 ## Development Workflow and Repository Layout
 
@@ -194,8 +208,11 @@ Each step lists the commands executed, their purpose, the verification output, a
 | [5](#step-5-review-the-finalized-can-protocol) | Retrieve and review the finalized CAN protocol | Windows | 15 | Git, PowerShell |
 | [6](#step-6-implement-the-finalized-protocol-and-realistic-signals) | Implement the protocol, signals, and timing; compile and start | Windows + Kali | 16 | VS Code, `gcc` |
 | [7](#step-7-verify-frame-format-and-signal-variation) | Verify frame format and signal variation | Kali | 17 | `candump` |
-| [8](#step-8-validate-and-tune-the-transmission-rate) | Measure the rate, diagnose the shortfall, correct the scheduler | Kali (+ Windows) | 18–22 | `candump`, `awk`, `gcc`, `diff` |
+| [8](#step-8-validate-and-tune-the-transmission-rate) | Measure the rate, diagnose the shortfall, correct the scheduler, re-verify | Kali (+ Windows) | 18–22 | `candump`, `awk`, `gcc`, `diff` |
 | [9](#step-9-commit-and-push-the-final-source) | Commit and push the final source | Windows | — | Git |
+| [10](#step-10-improve-signal-realism-and-reproducibility) | Fix signal update rate, link RPM to speed, add a seed option | Windows + Kali | 23–24 | VS Code, `gcc`, `candump` |
+| [11](#step-11-record-the-three-10-minute-baseline-datasets) | Record three 10-minute baseline datasets with Member 3 | Kali | 25 | simulator, logger, validator |
+| [12](#step-12-automated-payload-tests-week-3) | Automated payload tests | Kali | — | `gcc`, test program |
 
 ---
 
@@ -1323,6 +1340,8 @@ The implementation introduces the following changes:
 - **Eight-byte frames:** DLC 8, unused bytes zero, and an independent rolling counter in byte 7.
 - **Big-endian encoding:** RPM and the signed steering angle occupy bytes 0–1; temperature is sent as °C + 40.
 - **Graceful termination:** `Ctrl+C` (SIGINT) or SIGTERM stops the loop and closes the socket cleanly.
+- **Range validation:** every signal is clamped to its protocol range before encoding (`clamp_int`), so normal traffic never contains out-of-range values that the detection engine could mistake for an attack.
+- **Error handling:** socket creation, interface lookup (`ioctl`), `bind`, every `write`, and every `clock_gettime` call are checked. On failure the simulator prints a clear error with `perror` and exits with a non-zero status, so it never claims to be transmitting when it is not. The rolling counter only advances after a successful write.
 
 Save the file in VS Code. Because the final source replaces the Step 3 version, the previous version remains recoverable from the Step 4.8 commit.
 
@@ -1464,7 +1483,7 @@ Decoded examples from the capture:
 
 ## Step 8: Validate and Tune the Transmission Rate
 
-> **Environment:** Kali Linux VM (8.9 on the Windows host)
+> **Environment:** Kali Linux VM (8.10 on the Windows host)
 
 Step 7 verified the frame format and signal behavior but not the timing. The finalized protocol targets approximately **320 frames per second** (Step 5.4), so this step measures the actual rate, diagnoses any shortfall, and corrects it. Every change is driven by measurements rather than assumptions, and the CAN identifiers, payload layout, signal definitions, and rolling counters must remain unchanged throughout.
 
@@ -1635,11 +1654,11 @@ cp ecu_simulator.c ecu_simulator_step17_50_backup.c
 ls -l ecu_simulator.c ecu_simulator_step17_50_backup.c
 ```
 
-The backup and the source are both 9,138 bytes. The correction changes the scheduler so that:
+The backup and the source are both 9,138 bytes before the change. The correction changes the scheduler so that:
 
 - Each ECU's next deadline is calculated from its **previous scheduled deadline** instead of the current time, so a late wake-up in one cycle no longer shifts every later cycle.
 - If an ECU has fallen behind by one or more whole periods, the missed deadlines are **skipped** instead of being sent as a catch-up burst, which would distort the normal-traffic baseline.
-- The ±1 ms jitter must still average to zero around the nominal period, so that the long-run rate equals the nominal rate.
+- The ±1 ms jitter is still applied to every interval and averages to zero, so the long-run rate equals the nominal rate.
 
 Review the change against the backup to confirm that only the scheduler block was modified:
 
@@ -1647,60 +1666,154 @@ Review the change against the backup to confirm that only the scheduler block wa
 diff -u ecu_simulator_step17_50_backup.c ecu_simulator.c
 ```
 
-<!-- Paste the output of the diff -u command above here, inside a diff code block. -->
+The comparison showed changes only in the scheduler block. The CAN identifiers, periods, payload encoding, signal-update logic, and rolling-counter implementation were not modified.
 
-The CAN identifiers, periods, payload encoding, signal updates, and rolling counters were not modified. Then recompile:
+```diff
+--- ecu_simulator_step17_50_backup.c    2026-10-14 03:25:37.950983956 -0400
++++ ecu_simulator.c     2026-10-14 03:26:40.492335508 -0400
+@@ -302,8 +302,16 @@
+                 }
+ 
+                 long interval = ecus[i].period_us + random_jitter_us();
++                struct timespec next_deadline =
++                    add_us(ecus[i].next_send, interval);
+ 
+-                ecus[i].next_send = add_us(now, interval);
++                /* Skip missed deadlines instead of accumulating drift
++                   or sending bursts of catch-up frames. */
++                while (timespec_diff_us(&now, &next_deadline) >= 0) {
++                    next_deadline = add_us(next_deadline, interval);
++                }
++
++                ecus[i].next_send = next_deadline;
+             }
+         }
+ 
+```
+
+The change replaces one line with a short block. The next deadline is now `previous deadline + interval` instead of `now + interval`, and the `while` loop advances it by whole intervals only if it has already passed, so missed deadlines are skipped without a burst of catch-up frames. Because the jitter is added to every interval, the absolute transmission times can wander slowly relative to the start time, but each interval stays within the period ±1 ms and the long-run rate stays nominal.
+
+The source was last modified at 03:26 (Kali local time), before the first corrected capture at about 03:28 and the later ones, so all three captures in 8.8 were made with this version of the scheduler.
+
+Recompile with warnings enabled and check the executable:
 
 ```bash
 gcc -Wall -Wextra -o ecu_simulator ecu_simulator.c
+ls -lh ecu_simulator
 ```
 
-The compiler returned to the prompt without warnings or errors.
+```text
+-rwxrwxr-x 1 kali kali 18K Oct 14 06:53 ecu_simulator
+```
 
-<!--
+The compiler (GCC 16.2.0, no optimization level) returned without warnings or errors and produced the executable. The build is the same as in the earlier steps, with only the scheduler changed.
+
 ![Scheduler Correction Diff and Compilation](screenshots/21-scheduler-fix-diff-compile.png)
 
 **Screenshot 21:** Terminal showing the `diff -u` output for the scheduler change and the successful compilation.
--->
 
 ### 8.8 Verify the Corrected Transmission Rate
 
-Start the corrected simulator in one terminal, and in a second terminal repeat the measurement from 8.1 and 8.2:
+Make sure that only the corrected build is running. A simulator started before a recompile keeps running the old executable, so stop it, confirm that nothing is left, and start the new build:
 
 ```bash
-# Terminal 1
-cd ~/CAN-Sentinel/ecu-simulator
-./ecu_simulator
+pgrep -af '[.]\/ecu_simulator'
+kill -INT <PID>
+pgrep -af '[.]\/ecu_simulator'      # should print nothing
+./ecu_simulator                     # Terminal 1: leave running
+```
 
-# Terminal 2
-timeout 10s candump -L vcan0 > /tmp/can_updated_test.log
+`kill -INT` sends the same signal as `Ctrl+C`, so the simulator stops gracefully. In a second terminal, capture 10 seconds of traffic and calculate the rate exactly as in 8.1:
+
+```bash
+timeout 10s candump -t a vcan0 > /tmp/can_updated_test.log
 wc -l /tmp/can_updated_test.log
 head -n 1 /tmp/can_updated_test.log
 tail -n 1 /tmp/can_updated_test.log
-awk '{split($3,a,"#"); print a[1]}' /tmp/can_updated_test.log | sort | uniq -c
+awk '{print $3}' /tmp/can_updated_test.log | sort | uniq -c
 ```
 
-The first corrected capture contained **3,199 frames**, compared with 2,966 for the original build and 3,200 expected over 10 seconds. By the nominal 10-second approximation this is about 319.9 frames per second.
+> [!NOTE]
+> The corrected captures use the `candump -t a` output format, where the CAN identifier is the third field, so `awk '{print $3}'` is enough. The baseline captures in 8.1–8.2 used `-L`, where the third field is `ID#payload`, which is why they needed `split($3,a,"#")`.
 
-The exact duration, the measured rate, and the per-identifier counts must be calculated from the first and last timestamps, as in 8.1, before the 320 frames/s target is reported as achieved. The corrected counts should be close to the following:
+The first capture contained 3,199 frames, with timestamps `1791962899.177234` and `1791962909.171437`:
 
-| CAN ID | Period | Expected in 10 s |
-| :---: | ---: | ---: |
-| `0x0A0` | 20 ms | ≈ 500 |
-| `0x0B0` | 10 ms | ≈ 1,000 |
-| `0x100` | 10 ms | ≈ 1,000 |
-| `0x200` | 20 ms | ≈ 500 |
-| `0x300` | 100 ms | ≈ 100 |
-| `0x600` | 100 ms | ≈ 100 |
-| **Total** | | **≈ 3,200** |
+```text
+Capture duration = 1791962909.171437 - 1791962899.177234 = 9.994203 s
+Measured rate    = 3199 / 9.994203 ≈ 320.09 frames/s
+```
 
-<!--
-![Corrected Transmission-Rate Verification](screenshots/22-corrected-rate-verification.png)
+The per-identifier counts of that capture were:
 
-**Screenshot 22:** Terminal showing the corrected simulator's frame count, first and last timestamps, and per-identifier counts.
--->
+```text
+ 500 0A0
+ 998 0B0
+1001 100
+ 500 200
+ 100 300
+ 100 600
+```
 
-### 8.9 Bring the Corrected Source Back into the Repository
+The measurement was repeated twice to check repeatability:
+
+| Capture | Frames | Duration (s) | Measured rate (frames/s) | Share of 320 target |
+| :---: | ---: | ---: | ---: | ---: |
+| 1 | 3,199 | 9.994203 | 320.09 | 100.03 % |
+| 2 | 3,197 | 9.992603 | 319.94 | 99.98 % |
+| 3 | 3,198 | 9.991346 | 320.08 | 100.02 % |
+| **Average** | **3,198** | | **320.03** | **100.01 %** |
+
+| CAN ID | ECU | Period | Expected in 10 s | Capture 1 | Capture 2 |
+| :---: | --- | ---: | ---: | ---: | ---: |
+| `0x0A0` | Brake | 20 ms | 500 | 500 | 499 |
+| `0x0B0` | Steering | 10 ms | 1,000 | 998 | 998 |
+| `0x100` | Engine RPM | 10 ms | 1,000 | 1,001 | 1,000 |
+| `0x200` | Vehicle speed | 20 ms | 500 | 500 | 500 |
+| `0x300` | Engine temperature | 100 ms | 100 | 100 | 100 |
+| `0x600` | Infotainment | 100 ms | 100 | 100 | 100 |
+| **Total** | | | **3,200** | **3,199** | **3,197** |
+
+The three captures give 319.94–320.09 frames per second, an average of about 320.03, which meets the 320 frames/s target. The per-identifier counts are within about 0.2 % of nominal for every ECU. Before the correction, the 10 ms ECUs were 9–10 % short (8.2). Per-identifier counts were recorded for the first two captures only.
+
+![Corrected Transmission-Rate Validation](screenshots/22-corrected-rate-validation.png)
+
+**Screenshot 22:** Terminal showing the validation capture: frame count and first and last timestamps used to calculate the corrected transmission rate.
+
+### 8.9 Confirm the Protocol Is Unchanged After the Correction
+
+The scheduler change must not alter the protocol, so the identifiers, periods, DLC, and rolling-counter position were checked in the corrected source:
+
+```bash
+grep -nE '0x0A0|0x0B0|0x100|0x200|0x300|0x600|period_us' ecu_simulator.c
+grep -nE 'can_dlc|data\[7\]|CAN_MAX_DLEN' ecu_simulator.c
+grep -nE '#define DLC|DLC[[:space:]]*=' ecu_simulator.c
+```
+
+```text
+21:    long period_us;
+29:    {0x0A0,  20000, {0, 0}, 0},  /* Brake: 20 ms */
+30:    {0x0B0,  10000, {0, 0}, 0},  /* Steering: 10 ms */
+31:    {0x100,  10000, {0, 0}, 0},  /* Engine RPM: 10 ms */
+32:    {0x200,  20000, {0, 0}, 0},  /* Vehicle speed: 20 ms */
+33:    {0x300, 100000, {0, 0}, 0},  /* Temperature: 100 ms */
+34:    {0x600, 100000, {0, 0}, 0}   /* Infotainment: 100 ms */
+
+154:    frame->can_dlc = DLC;
+194:    frame->data[7] = ecu->counter;
+
+16:#define DLC 8
+```
+
+| Check | Result |
+| --- | --- |
+| CAN identifiers | All six match the finalized protocol. |
+| Periods | 20, 10, 10, 20, 100, and 100 ms match the protocol, giving 320 frames/s nominal. |
+| DLC | `#define DLC 8`, applied to every frame. |
+| Rolling counter | Stored in byte 7 of every frame. |
+
+These source checks confirm the protocol definition. The runtime behavior was verified by the captures in 8.8, where all six identifiers appear with the expected counts.
+
+### 8.10 Bring the Corrected Source Back into the Repository
 
 The correction was first applied to the Kali working copy so that it could be tested. Because the repository on Windows is the source of truth, the same file must be placed in `ecu_sim/ecu_simulator.c` (or the change re-applied in VS Code) and the two copies compared:
 
@@ -1716,7 +1829,33 @@ sha256sum ~/CAN-Sentinel/ecu-simulator/ecu_simulator.c
 
 The hashes must match (letter case may differ), which proves that the file committed in Step 9 is the file that was tested. Check that VS Code shows **LF** line endings, because CRLF changes the hash.
 
-**Result:** The baseline rate was about 294–298 frames/s (92–93 % of the target). The shortfall was traced to a constant delay of about 1 ms per frame that accumulates because each deadline is calculated from the time after transmission. Compiler optimization did not help, and re-basing the deadline on the previous scheduled deadline raised the first 10-second capture to 3,199 frames. The final rate measurement of 8.8 completes this step.
+### 8.11 Check Per-ID Timing
+
+An aggregate rate of 320 frames/s can look correct even when one ECU transmits irregularly, so the interval between consecutive frames is checked for each identifier, using a capture in the `candump -t a` format from 8.8:
+
+```bash
+awk '{gsub(/[()]/,"",$1); id=$3;
+  if (id in last) { d=($1-last[id])*1000; s[id]+=d; n[id]++;
+    if (!(id in mn) || d<mn[id]) mn[id]=d; if (d>mx[id]) mx[id]=d }
+  last[id]=$1 }
+  END { for (i in n) printf "%s  n=%d  avg=%.2f ms  min=%.2f ms  max=%.2f ms\n",
+        i, n[i], s[i]/n[i], mn[i], mx[i] }' /tmp/can_updated_test.log | sort
+```
+
+Each average should be close to the nominal period, and the minimum and maximum should stay within about ±2 ms of it.
+
+| CAN ID | Nominal | Average | Min | Max |
+| :---: | ---: | ---: | ---: | ---: |
+| `0x0A0` | 20 ms | TO ADD | TO ADD | TO ADD |
+| `0x0B0` | 10 ms | TO ADD | TO ADD | TO ADD |
+| `0x100` | 10 ms | TO ADD | TO ADD | TO ADD |
+| `0x200` | 20 ms | TO ADD | TO ADD | TO ADD |
+| `0x300` | 100 ms | TO ADD | TO ADD | TO ADD |
+| `0x600` | 100 ms | TO ADD | TO ADD | TO ADD |
+
+Member 3's CSV validator (`dashboard/validate_csv.py` on `member-3`) reports the same per-ID periods for recorded CSV files and is used again in Step 11.
+
+**Result:** The baseline rate was about 294–298 frames/s (92–93 % of the target). The shortfall was traced to a constant delay of about 1 ms per frame that accumulates because each deadline is calculated from the time after transmission. Compiler optimization did not help. Calculating each deadline from the previous scheduled deadline and skipping missed deadlines raised the rate to **319.94–320.09 frames/s** (average ≈ 320.03) over three 10-second captures, with the protocol definition unchanged.
 
 ---
 
@@ -1729,14 +1868,115 @@ Only the repository files under `ecu_sim/` are committed. Kali-side files (the c
 ```powershell
 cd D:\Study\Projects\CAN-Sentinel
 git status --short
-git add ecu_sim/ecu_simulator.c
+git add ecu_sim/ecu_simulator.c ecu_sim/README.md ecu_sim/.gitignore
 git commit -m "Implement finalized CAN protocol with realistic signals and drift-free scheduling"
 git push origin member-1
 ```
 
-`git status --short` should list only `ecu_sim/ecu_simulator.c` as modified. If the build/run guide in `ecu_sim/README.md` was updated for the final protocol (periodic transmission and continuous operation), add it to the same commit.
+`git status --short` should list only the three `ecu_sim/` files. `ecu_sim/README.md` is the updated build and run guide for the final periodic protocol, and `ecu_sim/.gitignore` contains the single line `ecu_simulator`, so the compiled executable can never be committed by mistake. All commits go to `member-1` only; nothing is committed or merged to `main`.
 
 **Result:** The final simulator source is committed to the `member-1` branch and pushed to GitHub, ready for review and integration with the other CAN-Sentinel modules.
+
+---
+
+## Step 10: Improve Signal Realism and Reproducibility
+
+> **Environment:** Windows host (edit) + Kali Linux VM (test)
+> **Status:** Planned
+
+Step 7 verified that signals vary, but some behaviour is not realistic enough for a training baseline:
+
+| Issue | Current behaviour | Why it matters |
+| --- | --- | --- |
+| Brake switch changes too often | Brake signals update before every brake frame (50 times per second) with an 8 % toggle chance, so the switch flips about 4 times per second | The ML engine would learn that a rapidly flickering brake is normal, which makes a `spoof_brake` attack harder to detect |
+| Independent signals | Engine RPM and vehicle speed change independently | Real RPM follows speed; correlated signals make the baseline more realistic |
+| Not repeatable | `srand(time(NULL))` gives a different sequence every run | Repeatable runs make it easier to compare scheduler changes and ML results |
+
+### 10.1 Update Signals on a Fixed Interval
+
+Keep a separate signal-update deadline (for example every **50 ms**) in the main loop and update the vehicle state only when it is due, independently of how often each ECU transmits. Make the brake switch change only every few seconds (for example a 1–2 % chance per 50 ms update, or a timed hold of 2–6 seconds per state). Brake pressure should rise while the switch is on and fall towards 0 while it is off.
+
+### 10.2 Link Engine RPM to Vehicle Speed
+
+Derive RPM from speed with a small amount of noise, for example:
+
+```c
+engine_rpm = clamp_int(800 + vehicle_speed * 25 + (rand() % 101) - 50, 800, 4000);
+```
+
+Change vehicle speed slowly (for example ±1 km/h per 50 ms update), so speed and RPM rise and fall together.
+
+### 10.3 Add an Optional Random Seed
+
+```c
+int main(int argc, char *argv[])
+{
+    unsigned int seed = (argc > 1) ? (unsigned int)strtoul(argv[1], NULL, 10)
+                                   : (unsigned int)time(NULL);
+    srand(seed);
+    printf("Random seed: %u\n", seed);
+    ...
+}
+```
+
+`./ecu_simulator 42` reproduces the same signal sequence; `./ecu_simulator` without an argument stays random. The seed is printed at start-up so any run can be repeated.
+
+### 10.4 Re-verify
+
+Repeat 7.1 (frame format and variation), 8.8 (rate), 8.9 (protocol unchanged) and 8.11 (per-ID timing) to confirm that the IDs, DLC, payload layout, counters and 320 frames/s rate are unchanged. Update `ecu_sim/README.md` with the signal update interval and the seed option, then commit on `member-1`.
+
+<!-- Screenshots 23–24: brake switch changing every few seconds in candump; rate re-verification. -->
+
+**Result:** TO ADD after implementation.
+
+---
+
+## Step 11: Record the Three 10-Minute Baseline Datasets
+
+> **Environment:** Kali Linux VM, together with Member 3 (Sadhamail)
+> **Status:** Planned
+
+The team's ML engine trains on normal traffic recorded from this simulator. Member 3's logger writes the agreed CSV format (`timestamp, can_id, dlc, data_hex, label`).
+
+```bash
+# Terminal 1
+./ecu_sim/ecu_simulator
+
+# Terminal 2: Member 3's logger (branch member-3); confirm the exact arguments with Sadhamail
+python3 dashboard/can_logger.py ...
+```
+
+Record three separate 10-minute runs and validate each with `dashboard/validate_csv.py`:
+
+| Run | File | Frames (expected ≈ 192,000) | Measured rate | IDs seen | Validator result |
+| --- | --- | ---: | ---: | :---: | --- |
+| 1 | `data/normal_run1_<MMDD>.csv` | TO ADD | TO ADD | TO ADD | TO ADD |
+| 2 | `data/normal_run2_<MMDD>.csv` | TO ADD | TO ADD | TO ADD | TO ADD |
+| 3 | `data/normal_run3_<MMDD>.csv` | TO ADD | TO ADD | TO ADD | TO ADD |
+
+Runs 1 and 2 are used to train the model and run 3 is kept for false-alarm testing. Large CSV files are shared through the team's Google Drive, not committed to GitHub.
+
+<!-- Screenshot 25: logger and simulator running together; validator output. -->
+
+**Result:** TO ADD after recording.
+
+---
+
+## Step 12: Automated Payload Tests (Week 3)
+
+> **Status:** Planned for Week 3
+
+A small test program checks the protocol without a live capture: all six IDs, DLC 8, byte positions, counter progression and wrap-around (255 → 0), signal bounds, and encoding/decoding (for example the signed steering angle and the +40 temperature offset). This catches protocol regressions before they reach the team's training datasets.
+
+---
+
+## Known Limitations
+
+- Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
+- Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter.
+- Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
+- Signal values are bounded random walks, not a physical vehicle model (improved in Step 10).
+- The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
 
 ---
 
@@ -1746,10 +1986,12 @@ The implementation provides a stable virtual automotive CAN environment in which
 
 **Brake → Steering → Engine RPM → Vehicle Speed → Engine Temperature → Infotainment**
 
-Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined nominal rate of 320 frames per second. This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
+Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined rate of 320 frames per second (measured average ≈ 320.03 frames/s, Step 8). This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
 
 ## Next Steps
 
-- Complete the rate measurement in 8.8 (duration, measured rate, per-identifier counts) and update the status table.
-- Update `ecu_sim/README.md` so that it describes the final periodic protocol rather than the single-shot baseline.
-- Provide the normal traffic to the CAN-Sentinel traffic-sniffing and data-logging modules, which build on this baseline.
+1. Hash-verify (8.10) and commit the final `ecu_sim/` files to `member-1` (Step 9).
+2. Record the per-ID timing results (8.11).
+3. Implement and verify signal realism and the seed option (Step 10).
+4. Record the three 10-minute baseline datasets with Member 3 (Step 11).
+5. Automated payload tests in Week 3 (Step 12).
