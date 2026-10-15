@@ -197,14 +197,14 @@ timestamps. With `candump -t a`, the CAN ID is the third field.
 
 Per-ID counts (expected values for a 10-second capture):
 
-| CAN ID | Expected | Capture 1 | Capture 2 |
-|---|---:|---:|---:|
-| `0x0A0` | 500 | 500 | 499 |
-| `0x0B0` | 1,000 | 998 | 998 |
-| `0x100` | 1,000 | 1,001 | 1,000 |
-| `0x200` | 500 | 500 | 500 |
-| `0x300` | 100 | 100 | 100 |
-| `0x600` | 100 | 100 | 100 |
+| CAN ID | Expected | Capture 1 | Capture 2 | Capture 3 |
+|---|---:|---:|---:|---:|
+| `0x0A0` | 500 | 500 | 499 | 499 |
+| `0x0B0` | 1,000 | 998 | 998 | 998 |
+| `0x100` | 1,000 | 1,001 | 1,000 | 1,000 |
+| `0x200` | 500 | 500 | 500 | 500 |
+| `0x300` | 100 | 100 | 100 | 100 |
+| `0x600` | 100 | 100 | 100 | 100 |
 
 All three captures contained all six expected IDs; per-ID counts were recorded for the
 first two. Every count is within about 0.2 % of nominal, and the average rate of

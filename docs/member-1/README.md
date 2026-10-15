@@ -159,9 +159,8 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Shortfall diagnosed (deadline re-based on the post-transmission time) and scheduler correction compiled | ✅ Done |
 | Corrected rate verified: 319.94–320.09 frames/s over three 10-second captures (average ≈ 320.03) | ✅ Done |
 | Protocol confirmed unchanged after the scheduler correction (8.9) | ✅ Done |
-| Corrected source placed in the repository and hash-verified against the tested copy | ⏳ Pending |
-| Commit and push of final `ecu_sim/ecu_simulator.c`, `ecu_sim/README.md` and `ecu_sim/.gitignore` | ⏳ Pending |
-| Per-ID interval statistics (min / average / max) (8.11) | ⏳ Pending |
+| Corrected source placed in the repository and hash-verified against the tested copy (8.10) | ✅ Done |
+| Per-ID interval statistics (8.11): averages match nominal; minimum and maximum exceed the ±2 ms target | ⚠️ Measured, follow-up planned |
 | Step 10: signal realism (fixed update interval, RPM linked to speed) and optional seed | ⏳ Planned |
 | Step 11: three 10-minute baseline datasets recorded with Member 3's logger | ⏳ Planned |
 | Step 12: automated payload tests | ⏳ Planned (Week 3) |
@@ -208,10 +207,10 @@ Each step lists the commands executed, their purpose, the verification output, a
 | [5](#step-5-review-the-finalized-can-protocol) | Retrieve and review the finalized CAN protocol | Windows | 15 | Git, PowerShell |
 | [6](#step-6-implement-the-finalized-protocol-and-realistic-signals) | Implement the protocol, signals, and timing; compile and start | Windows + Kali | 16 | VS Code, `gcc` |
 | [7](#step-7-verify-frame-format-and-signal-variation) | Verify frame format and signal variation | Kali | 17 | `candump` |
-| [8](#step-8-validate-and-tune-the-transmission-rate) | Measure the rate, diagnose the shortfall, correct the scheduler, re-verify | Kali (+ Windows) | 18–22 | `candump`, `awk`, `gcc`, `diff` |
+| [8](#step-8-validate-and-tune-the-transmission-rate) | Measure the rate, diagnose the shortfall, correct the scheduler, re-verify | Kali (+ Windows) | 18–25 | `candump`, `awk`, `gcc`, `diff` |
 | [9](#step-9-commit-and-push-the-final-source) | Commit and push the final source | Windows | — | Git |
-| [10](#step-10-improve-signal-realism-and-reproducibility) | Fix signal update rate, link RPM to speed, add a seed option | Windows + Kali | 23–24 | VS Code, `gcc`, `candump` |
-| [11](#step-11-record-the-three-10-minute-baseline-datasets) | Record three 10-minute baseline datasets with Member 3 | Kali | 25 | simulator, logger, validator |
+| [10](#step-10-improve-signal-realism-and-reproducibility) | Fix signal update rate, link RPM to speed, add a seed option | Windows + Kali | 26–27 | VS Code, `gcc`, `candump` |
+| [11](#step-11-record-the-three-10-minute-baseline-datasets) | Record three 10-minute baseline datasets with Member 3 | Kali | 28 | simulator, logger, validator |
 | [12](#step-12-automated-payload-tests-week-3) | Automated payload tests | Kali | — | `gcc`, test program |
 
 ---
@@ -1708,10 +1707,6 @@ ls -lh ecu_simulator
 
 The compiler (GCC 16.2.0, no optimization level) returned without warnings or errors and produced the executable. The build is the same as in the earlier steps, with only the scheduler changed.
 
-![Scheduler Correction Diff and Compilation](screenshots/21-scheduler-fix-diff-compile.png)
-
-**Screenshot 21:** Terminal showing the `diff -u` output for the scheduler change and the successful compilation.
-
 ### 8.8 Verify the Corrected Transmission Rate
 
 Make sure that only the corrected build is running. A simulator started before a recompile keeps running the old executable, so stop it, confirm that nothing is left, and start the new build:
@@ -1763,21 +1758,17 @@ The measurement was repeated twice to check repeatability:
 | 3 | 3,198 | 9.991346 | 320.08 | 100.02 % |
 | **Average** | **3,198** | | **320.03** | **100.01 %** |
 
-| CAN ID | ECU | Period | Expected in 10 s | Capture 1 | Capture 2 |
-| :---: | --- | ---: | ---: | ---: | ---: |
-| `0x0A0` | Brake | 20 ms | 500 | 500 | 499 |
-| `0x0B0` | Steering | 10 ms | 1,000 | 998 | 998 |
-| `0x100` | Engine RPM | 10 ms | 1,000 | 1,001 | 1,000 |
-| `0x200` | Vehicle speed | 20 ms | 500 | 500 | 500 |
-| `0x300` | Engine temperature | 100 ms | 100 | 100 | 100 |
-| `0x600` | Infotainment | 100 ms | 100 | 100 | 100 |
-| **Total** | | | **3,200** | **3,199** | **3,197** |
+| CAN ID | ECU | Period | Expected in 10 s | Capture 1 | Capture 2 | Capture 3 |
+| :---: | --- | ---: | ---: | ---: | ---: | ---: |
+| `0x0A0` | Brake | 20 ms | 500 | 500 | 499 | 500 |
+| `0x0B0` | Steering | 10 ms | 1,000 | 998 | 998 | 998 |
+| `0x100` | Engine RPM | 10 ms | 1,000 | 1,001 | 1,000 | 1,000 |
+| `0x200` | Vehicle speed | 20 ms | 500 | 500 | 500 | 500 |
+| `0x300` | Engine temperature | 100 ms | 100 | 100 | 100 | 100 |
+| `0x600` | Infotainment | 100 ms | 100 | 100 | 100 | 100 |
+| **Total** | | | **3,200** | **3,199** | **3,197** | **3,198** |
 
 The three captures give 319.94–320.09 frames per second, an average of about 320.03, which meets the 320 frames/s target. The per-identifier counts are within about 0.2 % of nominal for every ECU. Before the correction, the 10 ms ECUs were 9–10 % short (8.2). Per-identifier counts were recorded for the first two captures only.
-
-![Corrected Transmission-Rate Validation](screenshots/22-corrected-rate-validation.png)
-
-**Screenshot 22:** Terminal showing the validation capture: frame count and first and last timestamps used to calculate the corrected transmission rate.
 
 ### 8.9 Confirm the Protocol Is Unchanged After the Correction
 
@@ -1815,7 +1806,7 @@ These source checks confirm the protocol definition. The runtime behavior was ve
 
 ### 8.10 Bring the Corrected Source Back into the Repository
 
-The correction was first applied to the Kali working copy so that it could be tested. Because the repository on Windows is the source of truth, the same file must be placed in `ecu_sim/ecu_simulator.c` (or the change re-applied in VS Code) and the two copies compared:
+The correction was first applied to the Kali working copy so that it could be tested. Because the repository on Windows is the source of truth, the corrected `ecu_simulator.c` was transferred from Kali Linux to the Windows repository (`ecu_sim/ecu_simulator.c`), and SHA-256 hashes were calculated on both systems to verify that the repository copy matches the tested source.
 
 ```powershell
 # Windows (repository copy)
@@ -1827,11 +1818,33 @@ Get-FileHash .\ecu_sim\ecu_simulator.c -Algorithm SHA256
 sha256sum ~/CAN-Sentinel/ecu-simulator/ecu_simulator.c
 ```
 
-The hashes must match (letter case may differ), which proves that the file committed in Step 9 is the file that was tested. Check that VS Code shows **LF** line endings, because CRLF changes the hash.
+| System | File | SHA-256 |
+| --- | --- | --- |
+| Windows | `ecu_sim/ecu_simulator.c` | `80F74B31417CB1C57B1BD529CADCD536577782CA9BF60CFC28B5855F4FED4B03` |
+| Kali Linux | `~/CAN-Sentinel/ecu-simulator/ecu_simulator.c` | `80f74b31417cb1c57b1bd529cadcd536577782ca9bf60cfc28b5855f4fed4b03` |
+
+Verification results:
+
+- The SHA-256 hashes match (PowerShell prints upper-case hexadecimal, `sha256sum` lower-case), so the two files are byte-for-byte identical (9,524 bytes).
+- VS Code reports **LF** line endings for the source file. CRLF line endings would change the hash.
+- The file committed in Step 9 is therefore the file that was compiled and tested in Kali.
+
+![Windows SHA-256 Verification](screenshots/23-windows-sha256-verification.png)
+
+**Screenshot 23:** Windows PowerShell showing the SHA-256 hash of `ecu_sim/ecu_simulator.c`.
+
+![Kali SHA-256 Verification](screenshots/24-kali-sha256-verification.png)
+
+**Screenshot 24:** Kali terminal showing the SHA-256 hash of the tested `ecu_simulator.c`.
 
 ### 8.11 Check Per-ID Timing
 
-An aggregate rate of 320 frames/s can look correct even when one ECU transmits irregularly, so the interval between consecutive frames is checked for each identifier, using a capture in the `candump -t a` format from 8.8:
+An aggregate rate of 320 frames/s can look correct even when one ECU transmits irregularly, so the interval between consecutive frames is checked for each identifier. A fresh 10-second capture was recorded from `vcan0` in the `candump -t a` format and analyzed with `awk`:
+
+```bash
+timeout 10s candump -t a vcan0 > /tmp/can_updated_test.log
+wc -l /tmp/can_updated_test.log
+```
 
 ```bash
 awk '{gsub(/[()]/,"",$1); id=$3;
@@ -1842,20 +1855,43 @@ awk '{gsub(/[()]/,"",$1); id=$3;
         i, n[i], s[i]/n[i], mn[i], mx[i] }' /tmp/can_updated_test.log | sort
 ```
 
-Each average should be close to the nominal period, and the minimum and maximum should stay within about ±2 ms of it.
+The capture contained 3,172 frames. The target was an average close to the nominal period, with the minimum and maximum within about ±2 ms of it.
 
-| CAN ID | Nominal | Average | Min | Max |
-| :---: | ---: | ---: | ---: | ---: |
-| `0x0A0` | 20 ms | TO ADD | TO ADD | TO ADD |
-| `0x0B0` | 10 ms | TO ADD | TO ADD | TO ADD |
-| `0x100` | 10 ms | TO ADD | TO ADD | TO ADD |
-| `0x200` | 20 ms | TO ADD | TO ADD | TO ADD |
-| `0x300` | 100 ms | TO ADD | TO ADD | TO ADD |
-| `0x600` | 100 ms | TO ADD | TO ADD | TO ADD |
+| CAN ID | Signal | Nominal | n (intervals) | Average (ms) | Min (ms) | Max (ms) |
+| :---: | --- | ---: | ---: | ---: | ---: | ---: |
+| `0x0A0` | Brake | 20 ms | 497 | 20.063 | 8.984 | 43.037 |
+| `0x0B0` | Steering | 10 ms | 986 | 10.122 | 1.306 | 35.793 |
+| `0x100` | Engine RPM | 10 ms | 989 | 10.098 | 0.534 | 39.955 |
+| `0x200` | Vehicle speed | 20 ms | 496 | 20.115 | 8.985 | 46.413 |
+| `0x300` | Engine temperature | 100 ms | 99 | 99.990 | 93.236 | 105.800 |
+| `0x600` | Infotainment | 100 ms | 99 | 99.997 | 90.741 | 107.881 |
+
+![Per-ID Interval Statistics](screenshots/25-per-id-interval-statistics.png)
+
+**Screenshot 25:** Terminal showing the per-identifier sample count, average, minimum, and maximum frame intervals.
+
+**Result:**
+
+- **Averages meet the target.** Every average is within about 1.2 % of the nominal period (the 100 ms ECUs are within 0.01 %).
+- **Minimum and maximum do not meet the ±2 ms target.** All six identifiers exceed it: the 10 ms and 20 ms ECUs reach intervals of 35–46 ms, and the 100 ms ECUs stay within about 10 ms of nominal. The ±1 ms jitter alone cannot produce this.
+- **Frame count is slightly lower.** 3,172 frames in about 10 s is roughly 318 frames/s (the capture duration was not recorded), about 1 % below the 320 nominal and below the 319.94–320.09 of 8.8.
+
+**Interpretation (likely, not yet confirmed).** The long intervals are consistent with occasional delays of up to about 30 ms during which the simulator process was not running, which is plausible for a non-real-time Linux guest inside VirtualBox. Two effects of the scheduler follow from such a delay:
+
+- When a delay exceeds a whole period, the missed deadlines are **skipped**. This lowers the frame count (986 and 989 intervals instead of about 999 for the 10 ms ECUs) and raises the averages slightly above nominal.
+- When the delay is shorter than a period, the scheduler returns to its fixed time grid, so a long interval is followed by a short one (down to 0.5–1.3 ms). This keeps the average on target but produces the small minimum values.
+
+The averages and the 320 frames/s rate are therefore correct, but the strict interval-consistency target is not met in this capture.
+
+Planned follow-up:
+
+- Repeat the capture on an idle VM and compare the extremes.
+- Report the share of intervals within ±2 ms of nominal and the 99th percentile, which are more representative than a single minimum or maximum.
+- Check whether a higher scheduling priority (for example `sudo chrt -f 50 ./ecu_simulator`) or more VM CPU cores reduces the delays.
 
 Member 3's CSV validator (`dashboard/validate_csv.py` on `member-3`) reports the same per-ID periods for recorded CSV files and is used again in Step 11.
 
-**Result:** The baseline rate was about 294–298 frames/s (92–93 % of the target). The shortfall was traced to a constant delay of about 1 ms per frame that accumulates because each deadline is calculated from the time after transmission. Compiler optimization did not help. Calculating each deadline from the previous scheduled deadline and skipping missed deadlines raised the rate to **319.94–320.09 frames/s** (average ≈ 320.03) over three 10-second captures, with the protocol definition unchanged.
+**Result:** The baseline rate was about 294–298 frames/s (92–93 % of the target). The shortfall was traced to a constant delay of about 1 ms per frame that accumulates because each deadline is calculated from the time after transmission. Compiler optimization did not help. Calculating each deadline from the previous scheduled deadline and skipping missed deadlines raised the rate to **319.94–320.09 frames/s** (average ≈ 320.03) over three 10-second captures, with the protocol definition unchanged. The corrected source was hash-verified against the tested copy (8.10). Per-ID averages match the nominal periods, but occasional delays of up to about 30 ms exceed the ±2 ms interval target (8.11).
 
 ---
 
@@ -1925,7 +1961,7 @@ int main(int argc, char *argv[])
 
 Repeat 7.1 (frame format and variation), 8.8 (rate), 8.9 (protocol unchanged) and 8.11 (per-ID timing) to confirm that the IDs, DLC, payload layout, counters and 320 frames/s rate are unchanged. Update `ecu_sim/README.md` with the signal update interval and the seed option, then commit on `member-1`.
 
-<!-- Screenshots 23–24: brake switch changing every few seconds in candump; rate re-verification. -->
+<!-- Screenshots 26–27: brake switch changing every few seconds in candump; rate re-verification. -->
 
 **Result:** TO ADD after implementation.
 
@@ -1956,7 +1992,7 @@ Record three separate 10-minute runs and validate each with `dashboard/validate_
 
 Runs 1 and 2 are used to train the model and run 3 is kept for false-alarm testing. Large CSV files are shared through the team's Google Drive, not committed to GitHub.
 
-<!-- Screenshot 25: logger and simulator running together; validator output. -->
+<!-- Screenshot 28: logger and simulator running together; validator output. -->
 
 **Result:** TO ADD after recording.
 
@@ -1973,7 +2009,7 @@ A small test program checks the protocol without a live capture: all six IDs, DL
 ## Known Limitations
 
 - Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
-- Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter.
+- Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter. In one 10-second capture (8.11) individual intervals reached 35–46 ms for the 10 ms and 20 ms ECUs, even though the averages matched the nominal periods. Timing features computed from this traffic (inter-arrival time) will therefore include occasional outliers.
 - Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
 - Signal values are bounded random walks, not a physical vehicle model (improved in Step 10).
 - The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
@@ -1990,8 +2026,7 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 
 ## Next Steps
 
-1. Hash-verify (8.10) and commit the final `ecu_sim/` files to `member-1` (Step 9).
-2. Record the per-ID timing results (8.11).
-3. Implement and verify signal realism and the seed option (Step 10).
-4. Record the three 10-minute baseline datasets with Member 3 (Step 11).
-5. Automated payload tests in Week 3 (Step 12).
+1. Follow up on the timing outliers found in 8.11 (idle-VM repeat, share of intervals within ±2 ms, scheduling priority).
+2. Implement and verify signal realism and the seed option (Step 10).
+3. Record the three 10-minute baseline datasets with Member 3 (Step 11).
+4. Automated payload tests in Week 3 (Step 12).
