@@ -1,7 +1,13 @@
 """
 dashboard_mockup.py - styled, resizable CAN-Sentinel dashboard.
 
-Static sample data only; nothing is read from the CAN bus yet.
+Data sources (all optional; the dashboard falls back to sample data):
+    dashboard/sample_alert.json   -> alert card, threat gauge, alert count
+    data/normal_run*_*.csv        -> traffic table and frames/second
+                                     (newest file by modification time)
+
+Nothing is read from the live CAN bus. When files load, the banner says
+"REPLAYING RECORDED FILE" so the dashboard never implies live detection.
 
 Run from the repository root:
     py dashboard/dashboard_mockup.py
@@ -10,7 +16,11 @@ Car image:
     dashboard/assets/can_sentinel_car.png
 """
 
+import csv
+import html
+import json
 import sys
+from collections import deque
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
@@ -32,27 +42,16 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSlider,
     QSizePolicy,
-    QGraphicsOpacityEffect,
 )
 
-# Sample threat score 0-100; later this comes from the alert JSON.
-THREAT = 25
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
 
-# Sample values only. Later these should come from real traffic and alerts.
-FRAMES_PER_SECOND = "320"
-ALERT_COUNT = "1"
-
-# Sample rows in the CSV schema plus a status column (OK or ALERT).
-ROWS = [
-    ("1791300000.123456", "0x0A0", "8", "3201000000000017", "OK"),
-    ("1791300000.133502", "0x0B0", "8", "00FA000000000042", "OK"),
-    ("1791300000.143611", "0x100", "8", "0BB5000000000009", "OK"),
-    ("1791300042.501223", "0x0A0", "8", "6400000000000099", "ALERT"),
-    ("1791300042.511400", "0x200", "8", "3C00000000000012", "OK"),
-]
-
-# Find the image relative to this Python file.
 DASHBOARD_DIR = Path(__file__).resolve().parent
+DATA_DIR = DASHBOARD_DIR.parent / "data"
+ALERT_FILE = DASHBOARD_DIR / "sample_alert.json"
+
 IMAGE_CANDIDATES = [
     DASHBOARD_DIR / "assets" / "can_sentinel_car.png",
     DASHBOARD_DIR / "assests" / "can_sentinel_car.png",
@@ -64,8 +63,123 @@ CAR_IMAGE_PATH = next(
     IMAGE_CANDIDATES[0],
 )
 
-# Qt style sheet: CSS-like rules. "#name" selects a widget by objectName.
-# The navy background is explicitly applied so it remains dark when zooming.
+# ---------------------------------------------------------------------------
+# Fallback sample data (used only when the real files are missing/malformed)
+# ---------------------------------------------------------------------------
+
+SAMPLE_THREAT = 25
+SAMPLE_FPS = "320"
+SAMPLE_ROWS = [
+    ("1791300000.123456", "0x0A0", "8", "3201000000000017", "OK"),
+    ("1791300000.133502", "0x0B0", "8", "00FA000000000042", "OK"),
+    ("1791300000.143611", "0x100", "8", "0BB5000000000009", "OK"),
+    ("1791300042.501223", "0x0A0", "8", "6400000000000099", "ALERT"),
+    ("1791300042.511400", "0x200", "8", "3C00000000000012", "OK"),
+]
+
+REQUIRED_ALERT_FIELDS = {
+    "timestamp", "attack_type", "suspect_id", "confidence",
+    "severity", "affected_system", "detection_layer", "technique",
+}
+REQUIRED_CSV_FIELDS = {"timestamp", "can_id", "dlc", "data_hex", "label"}
+
+
+# ---------------------------------------------------------------------------
+# Loaders
+# ---------------------------------------------------------------------------
+
+def load_alert(path):
+    """Return the alert dict, or None if missing, malformed or incomplete."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            alert = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(alert, dict) or not REQUIRED_ALERT_FIELDS <= alert.keys():
+        return None
+
+    try:
+        alert["confidence"] = float(alert["confidence"])
+    except (TypeError, ValueError):
+        return None
+
+    return alert
+
+
+def find_recording(data_dir):
+    """Newest data/normal_run*_*.csv, or None."""
+    try:
+        files = sorted(
+            data_dir.glob("normal_run*_*.csv"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return None
+    return files[0] if files else None
+
+
+def load_recording(path, n=5):
+    """
+    One pass over a recorded CSV.
+    Returns (last_n_rows, frames_per_second, filename) or None on any problem.
+    Rows are (timestamp, can_id, dlc, data_hex, status).
+    """
+    if path is None:
+        return None
+
+    tail = deque(maxlen=n)
+    count = 0
+    first_ts = last_ts = None
+
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames or not REQUIRED_CSV_FIELDS <= set(reader.fieldnames):
+                return None
+            for r in reader:
+                ts = float(r["timestamp"])
+                if first_ts is None:
+                    first_ts = ts
+                last_ts = ts
+                count += 1
+                status = "OK" if r["label"] == "normal" else "ALERT"
+                tail.append((r["timestamp"], r["can_id"], r["dlc"], r["data_hex"], status))
+    except (OSError, ValueError, KeyError):
+        return None
+
+    if count < 2 or last_ts is None or last_ts <= first_ts:
+        return None
+
+    fps = count / (last_ts - first_ts)
+    return list(tail), fps, Path(path).name
+
+
+# Load everything once at start-up.
+ALERT = load_alert(ALERT_FILE)
+RECORDING = load_recording(find_recording(DATA_DIR))
+
+if RECORDING:
+    ROWS, _fps, RECORDING_NAME = RECORDING
+    FRAMES_PER_SECOND = f"{_fps:.0f}"
+else:
+    ROWS, FRAMES_PER_SECOND, RECORDING_NAME = SAMPLE_ROWS, SAMPLE_FPS, None
+
+if ALERT:
+    # Placeholder mapping: confidence -> 0-100. Agree the real one with the ML lead.
+    THREAT = max(0, min(100, int(round(ALERT["confidence"] * 100))))
+    ALERT_COUNT = "1"
+else:
+    THREAT = 0 if RECORDING else SAMPLE_THREAT
+    ALERT_COUNT = "0" if RECORDING else "1"
+
+USING_FILES = bool(ALERT) or bool(RECORDING)
+
+# ---------------------------------------------------------------------------
+# Style
+# ---------------------------------------------------------------------------
+
 STYLE = """
 QMainWindow {
     background-color: #07111F;
@@ -121,6 +235,12 @@ QFrame#card {
 QFrame#alertCard {
     background-color: #211521;
     border: 1px solid #8D2736;
+    border-radius: 12px;
+}
+
+QFrame#alertCardEmpty {
+    background-color: #0F2219;
+    border: 1px solid #1F6B45;
     border-radius: 12px;
 }
 
@@ -207,6 +327,16 @@ def threat_level(score):
     return "HIGH", "#FF4D5E"
 
 
+def severity_color(severity):
+    """Colour for the severity word in the alert banner."""
+    return {
+        "low": "#35E58B",
+        "medium": "#FFB547",
+        "high": "#FF8A4D",
+        "critical": "#FF5A66",
+    }.get(str(severity).lower(), "#FF5A66")
+
+
 def make_card(title, value, color, size=30):
     """Create a rounded metric card with a title and a large value."""
 
@@ -217,7 +347,6 @@ def make_card(title, value, color, size=30):
         QSizePolicy.Policy.Fixed,
     )
 
-    # Horizontal layout places the decorative symbol beside the text.
     box = QHBoxLayout(card)
     box.setContentsMargins(14, 12, 14, 12)
     box.setSpacing(12)
@@ -225,7 +354,7 @@ def make_card(title, value, color, size=30):
     # Decorative symbols only; these are not live system indicators.
     symbols = {
         "Frames / second": "∿",
-        "Alerts (last 10 min)": "!",
+        "Alerts loaded": "!",
         "Threat level": "✓",
     }
 
@@ -240,7 +369,6 @@ def make_card(title, value, color, size=30):
         "font-weight: bold;"
     )
 
-    # Stack the title above the value.
     text_box = QVBoxLayout()
     text_box.setSpacing(3)
 
@@ -270,17 +398,14 @@ class Dashboard(QMainWindow):
         self.resize(1440, 900)
         self.setMinimumSize(760, 560)
 
-        # Load the original image once. It can be resized whenever the window changes.
         self.car_pixmap = QPixmap(str(CAR_IMAGE_PATH))
 
-        # Mirror the image horizontally so the car faces right to left.
-        # This is a mirror, not a diagonal rotation.
+        # Mirror horizontally so the car faces right to left.
         if not self.car_pixmap.isNull():
             self.car_pixmap = self.car_pixmap.transformed(
                 QTransform().scale(-1, 1)
             )
 
-        # Root widget contains the scrollable dashboard and zoom controls.
         root = QWidget()
         root.setObjectName("root")
 
@@ -288,7 +413,6 @@ class Dashboard(QMainWindow):
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
 
-        # Scrolling makes the whole dashboard accessible on smaller screens.
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(
@@ -305,12 +429,11 @@ class Dashboard(QMainWindow):
         page.setContentsMargins(24, 18, 24, 18)
         page.setSpacing(12)
 
-        # ---------------- Header: title and blended car image ----------------
+        # ---------------- Header: title and car image ----------------
 
         header = QHBoxLayout()
         header.setSpacing(8)
 
-        # Project title on the left.
         title_column = QVBoxLayout()
         title_column.setSpacing(5)
 
@@ -327,14 +450,27 @@ class Dashboard(QMainWindow):
         title_row.addWidget(heading_accent)
         title_row.addStretch(1)
 
-        subtitle = QLabel(
-            "Automotive ECU intrusion detection"
-            "  |  mock-up with sample data"
-        )
+        subtitle = QLabel("Automotive ECU intrusion detection")
         subtitle.setObjectName("sub")
 
-        demo_label = QLabel("DEMO MODE  •  STATIC SAMPLE DATA")
+        # Honest mode banner: says exactly where the numbers came from.
+        if USING_FILES:
+            parts = []
+            parts.append(
+                f"traffic: {RECORDING_NAME}" if RECORDING_NAME
+                else "traffic: sample rows"
+            )
+            parts.append(
+                f"alert: {ALERT_FILE.name}" if ALERT
+                else "alert: none loaded"
+            )
+            mode_text = "REPLAYING RECORDED FILE  •  NOT LIVE  |  " + "  |  ".join(parts)
+        else:
+            mode_text = "DEMO MODE  •  STATIC SAMPLE DATA"
+
+        demo_label = QLabel(mode_text)
         demo_label.setObjectName("muted")
+        demo_label.setWordWrap(True)
 
         title_column.addStretch(1)
         title_column.addLayout(title_row)
@@ -342,7 +478,6 @@ class Dashboard(QMainWindow):
         title_column.addWidget(demo_label)
         title_column.addStretch(1)
 
-        # The car sits directly on the navy background: no box or border.
         self.car_label = QLabel()
         self.car_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.car_label.setMinimumSize(300, 170)
@@ -355,7 +490,6 @@ class Dashboard(QMainWindow):
             "background-color: transparent; border: none;"
         )
 
-        # Display the image or explain where the image should be saved.
         if self.car_pixmap.isNull():
             self.car_label.setText(
                 "CAR IMAGE NOT FOUND\n\n"
@@ -368,7 +502,6 @@ class Dashboard(QMainWindow):
         else:
             self.update_car_image()
 
-        # Give the image more room in the header than in earlier versions.
         header.addLayout(title_column, 2)
         header.addWidget(self.car_label, 3)
         page.addLayout(header)
@@ -384,7 +517,7 @@ class Dashboard(QMainWindow):
             make_card("Frames / second", FRAMES_PER_SECOND, "#39C5FF")
         )
         cards.addWidget(
-            make_card("Alerts (last 10 min)", ALERT_COUNT, "#FFB547")
+            make_card("Alerts loaded", ALERT_COUNT, "#FFB547")
         )
         cards.addWidget(
             make_card("Threat level", name, color)
@@ -394,7 +527,6 @@ class Dashboard(QMainWindow):
 
         # ---------------- Threat score gauge ----------------
 
-        # The gauge uses the sample THREAT value, not a real detector result.
         threat_row = QHBoxLayout()
         threat_row.setSpacing(12)
 
@@ -428,41 +560,64 @@ class Dashboard(QMainWindow):
 
         # ---------------- Latest alert banner ----------------
 
-        # This alert is illustrative; it is not produced by a detection model.
         alert_card = QFrame()
-        alert_card.setObjectName("alertCard")
-
         alert_layout = QHBoxLayout(alert_card)
         alert_layout.setContentsMargins(16, 10, 16, 10)
         alert_layout.setSpacing(12)
 
-        alert_icon = QLabel("!")
+        alert_icon = QLabel()
         alert_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         alert_icon.setFixedSize(46, 46)
-        alert_icon.setStyleSheet(
-            "background-color: #3B1C2A;"
-            "color: #FF5A66;"
-            "border-radius: 10px;"
-            "font-size: 28px;"
-            "font-weight: bold;"
-        )
 
         alert_text = QVBoxLayout()
 
         alert_title = QLabel("Latest alert")
         alert_title.setStyleSheet("color: #B7C8DB; font-size: 12px;")
 
-        # Rich text lets the attack name and severity use different colours.
-        alert_detail = QLabel(
-            '<span style="color:#FF5A66;font-weight:bold;">'
-            'spoof_brake on 0x0A0</span>'
-            '<span style="color:#DCE8F7;">'
-            '  |  confidence 0.94  |  severity </span>'
-            '<span style="color:#FF5A66;font-weight:bold;">critical</span>'
-        )
+        alert_detail = QLabel()
         alert_detail.setTextFormat(Qt.TextFormat.RichText)
         alert_detail.setWordWrap(True)
         alert_detail.setStyleSheet("font-size: 15px;")
+
+        if ALERT:
+            alert_card.setObjectName("alertCard")
+            alert_icon.setText("!")
+            alert_icon.setStyleSheet(
+                "background-color: #3B1C2A;"
+                "color: #FF5A66;"
+                "border-radius: 10px;"
+                "font-size: 28px;"
+                "font-weight: bold;"
+            )
+
+            sev = str(ALERT["severity"])
+            sev_col = severity_color(sev)
+            e = html.escape  # file content is untrusted; escape before rich text
+
+            alert_detail.setText(
+                f'<span style="color:#FF5A66;font-weight:bold;">'
+                f'{e(str(ALERT["attack_type"]))} on {e(str(ALERT["suspect_id"]))}</span>'
+                f'<span style="color:#DCE8F7;">'
+                f'  |  confidence {ALERT["confidence"]:.2f}'
+                f'  |  {e(str(ALERT["affected_system"]))}'
+                f'  |  layer {e(str(ALERT["detection_layer"]))}'
+                f'  |  {e(str(ALERT["technique"]))}'
+                f'  |  severity </span>'
+                f'<span style="color:{sev_col};font-weight:bold;">{e(sev)}</span>'
+            )
+        else:
+            alert_card.setObjectName("alertCardEmpty")
+            alert_icon.setText("✓")
+            alert_icon.setStyleSheet(
+                "background-color: #12372A;"
+                "color: #35E58B;"
+                "border-radius: 10px;"
+                "font-size: 28px;"
+                "font-weight: bold;"
+            )
+            alert_detail.setText(
+                '<span style="color:#35E58B;font-weight:bold;">No alerts</span>'
+            )
 
         alert_text.addWidget(alert_title)
         alert_text.addWidget(alert_detail)
@@ -493,7 +648,11 @@ class Dashboard(QMainWindow):
             "color: #E8F2FF; font-size: 14px; font-weight: bold;"
         )
 
-        sample_badge = QLabel("SAMPLE DATA")
+        badge_text = (
+            f"LAST {len(ROWS)} ROWS OF {RECORDING_NAME}"
+            if RECORDING_NAME else "SAMPLE DATA"
+        )
+        sample_badge = QLabel(badge_text)
         sample_badge.setStyleSheet(
             "color: #8FA9C5;"
             "background-color: #172D46;"
@@ -515,12 +674,10 @@ class Dashboard(QMainWindow):
             ["timestamp", "can_id", "dlc", "data_hex", "status"]
         )
 
-        # Stretch columns to use the available horizontal space.
         table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
 
-        # Hide row numbers and reduce row height to make the table more compact.
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(30)
 
@@ -533,12 +690,10 @@ class Dashboard(QMainWindow):
         )
         table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
-        # Fill each table cell from the sample ROWS list.
         for r, row in enumerate(ROWS):
             for c, value in enumerate(row):
                 item = QTableWidgetItem(str(value))
 
-                # Highlight ALERT in red and OK in green.
                 if c == 4:
                     if value == "ALERT":
                         item.setForeground(QColor("#FF5A66"))
@@ -549,30 +704,26 @@ class Dashboard(QMainWindow):
 
                 table.setItem(r, c, item)
 
-        # A smaller height leaves more room for the header and car.
         table.setMinimumHeight(155)
         table.setMaximumHeight(195)
 
         traffic_layout.addWidget(table)
         page.addWidget(traffic_card)
 
-        # Footer makes it clear this is not connected to a live CAN bus.
         footer = QLabel(
             "CAN-SENTINEL  •  AUTOMOTIVE SECURITY MONITORING CONCEPT"
-            "  |  DEMO — NOT CONNECTED TO LIVE CAN"
+            "  |  NOT CONNECTED TO LIVE CAN"
         )
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         footer.setStyleSheet("color: #6F89A7; font-size: 10px;")
 
         page.addWidget(footer)
 
-        # Put the dashboard inside the scroll area.
         scroll.setWidget(content)
         outer_layout.addWidget(scroll, 1)
 
         # ---------------- Zoom controls ----------------
 
-        # These controls adjust the UI font size without replacing the theme.
         zoom_bar = QHBoxLayout()
         zoom_bar.setContentsMargins(12, 5, 12, 5)
         zoom_bar.setSpacing(8)
@@ -631,7 +782,6 @@ class Dashboard(QMainWindow):
 
         outer_layout.addWidget(zoom_container)
 
-        # Keyboard shortcuts: Ctrl + Plus/Minus to zoom, Ctrl + 0 to reset.
         QShortcut(
             QKeySequence("Ctrl++"),
             self,
@@ -652,7 +802,6 @@ class Dashboard(QMainWindow):
             activated=lambda: self.zoom_slider.setValue(100),
         )
 
-        # Set the root widget after all dashboard sections are ready.
         self.setCentralWidget(root)
 
     def update_car_image(self):
@@ -661,7 +810,6 @@ class Dashboard(QMainWindow):
         if self.car_pixmap.isNull():
             return
 
-        # Scale to the current label dimensions so the car grows with the window.
         target_size = self.car_label.size()
 
         if target_size.width() < 2 or target_size.height() < 2:
@@ -687,18 +835,16 @@ class Dashboard(QMainWindow):
 
         self.zoom_value.setText(f"{value}%")
 
-        # Do not replace the global stylesheet; doing so would remove the theme.
         font = self.font()
         font.setPointSizeF(9 * value / 100)
         self.centralWidget().setFont(font)
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)  # one QApplication per desktop application
-    app.setStyleSheet(STYLE)      # apply the dark theme to all widgets
+    app = QApplication(sys.argv)
+    app.setStyleSheet(STYLE)
 
     window = Dashboard()
-    window.show()                 # display the main dashboard
+    window.show()
 
-    # The event loop handles clicks, resizing, painting, and keyboard input.
     sys.exit(app.exec())
