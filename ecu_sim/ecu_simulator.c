@@ -1,3 +1,7 @@
+#define _DEFAULT_SOURCE
+#define _POSIX_C_SOURCE 200809L
+
+
 #include <errno.h>
 #include <linux/can.h>
 #include <linux/can/raw.h>
@@ -15,6 +19,9 @@
 #define ECU_COUNT 6
 #define DLC 8
 #define JITTER_US 1000
+#define SIGNAL_UPDATE_US 50000L
+#define BRAKE_HOLD_MIN_US 2000000L
+#define BRAKE_HOLD_MAX_US 6000000L
 
 typedef struct {
     canid_t can_id;
@@ -37,10 +44,13 @@ static ECU ecus[ECU_COUNT] = {
 static int brake_pressure = 0;
 static int brake_switch = 0;
 static int steering_angle = 0;
-static int engine_rpm = 1500;
+static int engine_rpm = 2300;
 static int vehicle_speed = 60;
 static int engine_temp_c = 90;
 static uint8_t infotainment_status = 1;
+
+static struct timespec next_signal_update;
+static struct timespec next_brake_toggle;
 
 static void handle_signal(int signal_number)
 {
@@ -91,58 +101,58 @@ static int clamp_int(int value, int minimum, int maximum)
     return value;
 }
 
-/* Update only the signal associated with the transmitting ECU. */
-static void update_signals(canid_t can_id)
+static long random_range(long minimum, long maximum)
 {
-    switch (can_id) {
-        case 0x0A0:
-            /* Brake pressure: 0-100; switch: 0 or 1 */
-            if (rand() % 100 < 8) {
-                brake_switch = !brake_switch;
-            }
+    return minimum
+         + (long)(rand() % (unsigned long)(maximum - minimum + 1));
+}
 
-            if (brake_switch) {
-                brake_pressure += 5 + rand() % 11;
-            } else {
-                brake_pressure -= 2 + rand() % 9;
-            }
+static void update_vehicle_state(const struct timespec *now)
+{
+    /* Change the brake switch only when its hold deadline expires. */
+    if (timespec_diff_us(now, &next_brake_toggle) >= 0) {
+        brake_switch = !brake_switch;
 
-            brake_pressure = clamp_int(brake_pressure, 0, 100);
-            break;
+        long hold_us = random_range(
+            BRAKE_HOLD_MIN_US,
+            BRAKE_HOLD_MAX_US
+        );
 
-        case 0x0B0:
-            /* Signed steering angle in 0.1-degree units */
-            steering_angle += (rand() % 21) - 10;
-            steering_angle = clamp_int(steering_angle, -450, 450);
-            break;
+        /* Schedule the next toggle relative to the current time. */
+        next_brake_toggle = add_us(*now, hold_us);
+    }
 
-        case 0x100:
-            /* Engine RPM */
-            engine_rpm += (rand() % 101) - 50;
-            engine_rpm = clamp_int(engine_rpm, 800, 4000);
-            break;
+    /* Brake pressure follows the brake switch. */
+    if (brake_switch) {
+        brake_pressure += (int)random_range(3, 8);
+    } else {
+        brake_pressure -= (int)random_range(1, 5);
+    }
 
-        case 0x200:
-            /* Vehicle speed in km/h */
-            vehicle_speed += (rand() % 5) - 2;
-            vehicle_speed = clamp_int(vehicle_speed, 0, 130);
-            break;
+    brake_pressure = clamp_int(brake_pressure, 0, 100);
 
-        case 0x300:
-            /* Coolant temperature in degrees Celsius */
-            engine_temp_c += (rand() % 3) - 1;
-            engine_temp_c = clamp_int(engine_temp_c, 80, 105);
-            break;
+    /* Change vehicle speed gradually. */
+    vehicle_speed += (int)random_range(-1, 1);
+    vehicle_speed = clamp_int(vehicle_speed, 0, 130);
 
-        case 0x600:
-            /* Infotainment status */
-            if (rand() % 1000 == 0) {
-                infotainment_status = (uint8_t)(rand() % 2);
-            }
-            break;
+    /* Engine RPM follows vehicle speed, with bounded noise. */
+    engine_rpm = clamp_int(
+        800 + vehicle_speed * 25 + (int)random_range(-50, 50),
+        800,
+        4000
+    );
 
-        default:
-            break;
+    /* Steering angle changes gradually. */
+    steering_angle += (int)random_range(-10, 10);
+    steering_angle = clamp_int(steering_angle, -450, 450);
+
+    /* Coolant temperature varies slowly. */
+    engine_temp_c += (int)random_range(-1, 1);
+    engine_temp_c = clamp_int(engine_temp_c, 80, 105);
+
+    /* Infotainment status changes rarely. */
+    if (rand() % 1000 == 0) {
+        infotainment_status = (uint8_t)(rand() % 2);
     }
 }
 
@@ -264,6 +274,13 @@ int main(void)
         return EXIT_FAILURE;
     }
 
+    next_signal_update = add_us(now, SIGNAL_UPDATE_US);
+
+    next_brake_toggle = add_us(
+        now,
+        random_range(BRAKE_HOLD_MIN_US, BRAKE_HOLD_MAX_US)
+    );
+
     /* Schedule the first frame after its nominal period plus jitter. */
     for (int i = 0; i < ECU_COUNT; i++) {
         long initial_delay = ecus[i].period_us + random_jitter_us();
@@ -284,12 +301,24 @@ int main(void)
             break;
         }
 
+        if (timespec_diff_us(&now, &next_signal_update) >= 0) {
+            update_vehicle_state(&now);
+
+            next_signal_update = add_us(
+                next_signal_update,
+                SIGNAL_UPDATE_US
+            );
+
+            while (timespec_diff_us(&now, &next_signal_update) >= 0) {
+                next_signal_update = add_us(
+                    next_signal_update,
+                    SIGNAL_UPDATE_US
+                );
+            }
+        }
+
         for (int i = 0; i < ECU_COUNT && running; i++) {
             if (timespec_diff_us(&now, &ecus[i].next_send) >= 0) {
-
-                /* Update only this ECU's signal before transmission. */
-                update_signals(ecus[i].can_id);
-
                 if (send_frame(socket_fd, &ecus[i]) < 0) {
                     running = 0;
                     break;
@@ -301,7 +330,9 @@ int main(void)
                     break;
                 }
 
-                long interval = ecus[i].period_us + random_jitter_us();
+                long interval =
+                    ecus[i].period_us + random_jitter_us();
+
                 struct timespec next_deadline =
                     add_us(ecus[i].next_send, interval);
 

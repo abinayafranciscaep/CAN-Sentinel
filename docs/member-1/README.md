@@ -161,7 +161,8 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Protocol confirmed unchanged after the scheduler correction (8.9) | ✅ Done |
 | Corrected source placed in the repository and hash-verified against the tested copy (8.10) | ✅ Done |
 | Per-ID interval statistics (8.11): averages match nominal; minimum and maximum exceed the ±2 ms target | ⚠️ Measured, follow-up planned |
-| Step 10: signal realism (fixed update interval, RPM linked to speed) and optional seed | ⏳ Planned |
+| Step 10: fixed 50 ms signal updates, 2–6 s brake hold, RPM derived from speed; compiled and runtime-validated per signal (10.1–10.15) | ✅ Done |
+| Step 10: optional random seed, rate/timing re-verification, repository update and commit (10.16) | 🔄 In progress |
 | Step 11: three 10-minute baseline datasets recorded with Member 3's logger | ⏳ Planned |
 | Step 12: automated payload tests | ⏳ Planned (Week 3) |
 
@@ -196,7 +197,7 @@ Kali VM: ~/CAN-Sentinel/ecu-simulator               (compile/test workspace, not
 
 # Implementation Guide
 
-Each step lists the commands executed, their purpose, the verification output, and the corresponding screenshots. Screenshots are numbered continuously from **1 to 22** and match the file names in `screenshots/` (`01-…` to `22-…`). Each step is tagged with the environment in which it runs.
+Each step lists the commands executed, their purpose, the verification output, and the corresponding screenshots. Screenshots are numbered continuously. Screenshots **1 to 25** (Steps 1–8) match the file names in `screenshots/` (`01-…` to `25-…`); the Step 10 evidence (**26 to 35**) uses descriptive `step-10-…` file names in the same folder. Each step is tagged with the environment in which it runs.
 
 | Step | Goal | Environment | Screenshots | Key Tools |
 | :---: | --- | :---: | :---: | --- |
@@ -209,7 +210,7 @@ Each step lists the commands executed, their purpose, the verification output, a
 | [7](#step-7-verify-frame-format-and-signal-variation) | Verify frame format and signal variation | Kali | 17 | `candump` |
 | [8](#step-8-validate-and-tune-the-transmission-rate) | Measure the rate, diagnose the shortfall, correct the scheduler, re-verify | Kali (+ Windows) | 18–25 | `candump`, `awk`, `gcc`, `diff` |
 | [9](#step-9-commit-and-push-the-final-source) | Commit and push the final source | Windows | — | Git |
-| [10](#step-10-improve-signal-realism-and-reproducibility) | Fix signal update rate, link RPM to speed, add a seed option | Windows + Kali | 26–27 | VS Code, `gcc`, `candump` |
+| [10](#step-10-improve-signal-realism-and-reproducibility) | Fix signal update rate, link RPM to speed, add a seed option (🔄 in progress) | Kali (+ Windows) | 26–35 | `nano`, `gcc`, `candump`, `grep` |
 | [11](#step-11-record-the-three-10-minute-baseline-datasets) | Record three 10-minute baseline datasets with Member 3 | Kali | 28 | simulator, logger, validator |
 | [12](#step-12-automated-payload-tests-week-3) | Automated payload tests | Kali | — | `gcc`, test program |
 
@@ -1917,55 +1918,361 @@ git push origin member-1
 
 ## Step 10: Improve Signal Realism and Reproducibility
 
-> **Environment:** Windows host (edit) + Kali Linux VM (test)
-> **Status:** Planned
+> **Environment:** Kali Linux VM (edit and test); Windows host (repository update, pending)
+> **Status:** 🔄 **In progress.** Signal realism is implemented, compiled, and runtime-validated in Kali (10.1–10.15). The seed option, the rate and timing re-verification, the repository update, and the commit are still pending (10.16).
 
-Step 7 verified that signals vary, but some behaviour is not realistic enough for a training baseline:
+Step 7 verified that signals vary, but some behavior is not realistic enough for a training baseline:
 
-| Issue | Current behaviour | Why it matters |
-| --- | --- | --- |
-| Brake switch changes too often | Brake signals update before every brake frame (50 times per second) with an 8 % toggle chance, so the switch flips about 4 times per second | The ML engine would learn that a rapidly flickering brake is normal, which makes a `spoof_brake` attack harder to detect |
-| Independent signals | Engine RPM and vehicle speed change independently | Real RPM follows speed; correlated signals make the baseline more realistic |
-| Not repeatable | `srand(time(NULL))` gives a different sequence every run | Repeatable runs make it easier to compare scheduler changes and ML results |
+| Issue | Behavior before Step 10 | Why it matters | Status |
+| --- | --- | --- | :---: |
+| Brake switch changes too often | Brake signals update before every brake frame (50 times per second) with an 8 % toggle chance, so the switch flips about 4 times per second | The ML engine would learn that a rapidly flickering brake is normal, which makes a `spoof_brake` attack harder to detect | ✅ Implemented and validated (10.6, 10.9, 10.15) |
+| Independent signals | Engine RPM and vehicle speed change independently | Real RPM follows speed; correlated signals make the baseline more realistic | ✅ Implemented; checked in source and capture (10.11) |
+| Not repeatable | `srand(time(NULL))` gives a different sequence every run | Repeatable runs make it easier to compare scheduler changes and ML results | ⏳ Pending (10.16) |
 
-### 10.1 Update Signals on a Fixed Interval
+All changes are developed in a separate working copy, `ecu_simulator_step10_working.c`, so the original source and its backup stay untouched. The implementation has the following objectives:
 
-Keep a separate signal-update deadline (for example every **50 ms**) in the main loop and update the vehicle state only when it is due, independently of how often each ECU transmits. Make the brake switch change only every few seconds (for example a 1–2 % chance per 50 ms update, or a timed hold of 2–6 seconds per state). Brake pressure should rise while the switch is on and fall towards 0 while it is off.
+- Update vehicle signals at a fixed 50 ms interval, independently of the individual ECU transmission schedules.
+- Keep the brake switch stable for a realistic period (2–6 s) instead of letting it toggle frequently.
+- Make brake pressure rise while the switch is on and fall while it is off.
+- Correlate engine RPM with vehicle speed.
+- Add an optional random seed for repeatable signal sequences.
+- Preserve the six CAN identifiers, DLC 8, payload encoding, rolling counters, transmission periods, and scheduler jitter.
 
-### 10.2 Link Engine RPM to Vehicle Speed
+### 10.1 Back Up the Existing Source Code
 
-Derive RPM from speed with a small amount of noise, for example:
+Before modifying the simulator, a backup of the existing source was created in Kali Linux. Two files were verified:
 
-```c
-engine_rpm = clamp_int(800 + vehicle_speed * 25 + (rand() % 101) - 50, 800, 4000);
+- Original source: `ecu_simulator.c`
+- Backup source: `ecu_simulator_step10_backup.c`
+
+Both files have the same SHA-256 hash, which confirms that the backup is identical to the original:
+
+```text
+80f74b31417cb1c57b1bd529cadcd536577782ca9bf60cfc28b5855f4fed4b03
+```
+![Source Backup and SHA-256 Verification](screenshots/step-10-source-backup-hash.png)
+
+**Screenshot 26:** Source backup and matching SHA-256 hashes in Kali Linux.
+
+### 10.2 Prepare a Working Copy
+
+A separate working copy was created to isolate the Step 10 changes from the original source. Three files are maintained in `~/CAN-Sentinel/ecu-simulator`:
+
+| File | Purpose |
+| --- | --- |
+| `ecu_simulator.c` | Original source file |
+| `ecu_simulator_step10_backup.c` | Backup of the original source |
+| `ecu_simulator_step10_working.c` | Working copy for all Step 10 modifications |
+
+The original source and the backup remain unchanged while the modifications are developed and tested. The hash of the working copy after editing is recorded in 10.4.
+
+### 10.3 Add Signal-Update Timing and Brake-Hold State
+
+The working copy was opened in Nano:
+
+```bash
+nano ecu_simulator_step10_working.c
 ```
 
-Change vehicle speed slowly (for example ±1 km/h per 50 ms update), so speed and RPM rise and fall together.
-
-### 10.3 Add an Optional Random Seed
+The timing configuration was extended with three constants:
 
 ```c
-int main(int argc, char *argv[])
-{
-    unsigned int seed = (argc > 1) ? (unsigned int)strtoul(argv[1], NULL, 10)
-                                   : (unsigned int)time(NULL);
-    srand(seed);
-    printf("Random seed: %u\n", seed);
-    ...
+#define SIGNAL_UPDATE_US 50000L
+#define BRAKE_HOLD_MIN_US 2000000L
+#define BRAKE_HOLD_MAX_US 6000000L
+```
+
+| Constant | Value | Meaning |
+| --- | ---: | --- |
+| `SIGNAL_UPDATE_US` | 50,000 µs | Vehicle-state update interval of 50 ms (20 updates per second) |
+| `BRAKE_HOLD_MIN_US` | 2,000,000 µs | Minimum brake-switch hold time of 2 s |
+| `BRAKE_HOLD_MAX_US` | 6,000,000 µs | Maximum brake-switch hold time of 6 s |
+
+Two deadline variables were added. They use `struct timespec`, consistent with the existing monotonic-clock scheduler:
+
+```c
+static struct timespec next_signal_update;   /* next vehicle-state update */
+static struct timespec next_brake_toggle;    /* earliest next brake-switch change */
+```
+
+The initial values were also changed. Engine RPM now starts at 2300 instead of 1500, which matches the planned relationship `engine_rpm = 800 + vehicle_speed * 25 + noise` at the initial speed of 60 km/h (800 + 60 × 25 = 2300 before noise is added):
+
+```c
+static int engine_rpm = 2300;
+static int vehicle_speed = 60;
+```
+
+The other state variables (brake pressure, brake switch, steering angle, coolant temperature, infotainment status) keep their existing roles.
+
+### 10.4 Add the Vehicle-State Update Function
+
+A `random_range()` helper (inclusive minimum and maximum) and a shared `update_vehicle_state()` function were added. The function updates the signals as follows:
+
+| Signal | Behavior per update |
+| --- | --- |
+| Brake switch | Changes state after a scheduled hold of 2–6 s |
+| Brake pressure | Rises while the switch is on and falls while it is off, bounded to 0–100 |
+| Vehicle speed | Changes by −1, 0, or +1 km/h, bounded to 0–130 km/h |
+| Engine RPM | Calculated from vehicle speed with bounded random variation, limited to 800–4000 RPM |
+| Steering angle | Changes gradually and stays within −450 to +450 (0.1° units) |
+| Coolant temperature | Changes gradually and stays within 80–105 °C |
+| Infotainment status | Small random chance of changing state |
+
+The new functions were confirmed in the working source with `grep`. The integrity check showed that the original and the backup still share the hash from 10.1, while the edited working copy has a different hash, as expected:
+
+```text
+32cb70a14e36c9879531219df8f6e7c9ba3a3fccce37b06310ee632e19022bcb   (working copy at this stage)
+```
+
+### 10.5 Initialize the Update Deadlines
+
+The two deadlines are initialized after the first monotonic clock reading and before the ECU transmission deadlines are scheduled:
+
+```c
+next_signal_update = add_us(now, SIGNAL_UPDATE_US);
+
+next_brake_toggle = add_us(
+    now,
+    random_range(BRAKE_HOLD_MIN_US, BRAKE_HOLD_MAX_US)
+);
+```
+
+The first vehicle-state update is therefore due 50 ms after start-up, and the first brake-switch change is due after a random 2–6 s. The existing per-ECU deadline initialization is unchanged. `grep` confirmed that both initializations are in the expected place.
+
+### 10.6 Integrate the Independent Vehicle-State Scheduler
+
+Previously the simulator called `update_signals(ecus[i].can_id)` immediately before each ECU transmission, so signal updates were triggered by the transmission events. The updated design uses a dedicated 50 ms schedule: the shared vehicle state is updated independently, and each ECU transmits the latest values on its own period.
+
+**1. Add the 50 ms scheduler.** The following block was added inside the main `while (running)` loop, after the clock is read and before the ECU transmission loop:
+
+```c
+if (timespec_diff_us(&now, &next_signal_update) >= 0) {
+    update_vehicle_state();
+
+    next_signal_update = add_us(
+        next_signal_update,
+        SIGNAL_UPDATE_US
+    );
+
+    while (timespec_diff_us(&now, &next_signal_update) >= 0) {
+        next_signal_update = add_us(
+            next_signal_update,
+            SIGNAL_UPDATE_US
+        );
+    }
 }
 ```
 
-`./ecu_simulator 42` reproduces the same signal sequence; `./ecu_simulator` without an argument stays random. The seed is printed at start-up so any run can be repeated.
+When the deadline has been reached, the block calls `update_vehicle_state()`, advances the deadline by 50 ms, and skips any further deadlines that have already expired. This keeps updates on a nominal 50 ms schedule without a burst of catch-up updates after a delay.
 
-### 10.4 Re-verify
+**2. Remove the old per-ECU update.** The call `update_signals(ecus[i].can_id)` and its comment were removed from the transmission loop. Only the transmission logic remains:
 
-Repeat 7.1 (frame format and variation), 8.8 (rate), 8.9 (protocol unchanged) and 8.11 (per-ID timing) to confirm that the IDs, DLC, payload layout, counters and 320 frames/s rate are unchanged. Update `ecu_sim/README.md` with the signal update interval and the seed option, then commit on `member-1`.
+```c
+if (send_frame(socket_fd, &ecus[i]) < 0) {
+    running = 0;
+    break;
+}
+```
 
-<!-- Screenshots 26–27: brake switch changing every few seconds in candump; rate re-verification. -->
+**3. Payload mapping is unchanged.** `prepare_frame()` still builds each payload from the shared state, all frames use DLC 8, and byte 7 remains the independent rolling counter incremented by `send_frame()`:
 
-**Result:** TO ADD after implementation.
+| CAN ID | ECU signal | Payload bytes |
+| :---: | --- | --- |
+| `0x0A0` | Brake pressure and brake switch | Byte 0: pressure; byte 1: switch |
+| `0x0B0` | Steering angle | Bytes 0–1: signed angle |
+| `0x100` | Engine RPM | Bytes 0–1: RPM |
+| `0x200` | Vehicle speed | Byte 0: speed |
+| `0x300` | Coolant temperature | Byte 0: °C + 40 |
+| `0x600` | Infotainment status | Byte 0: status |
+
+**4. Verify the edit.**
+
+```bash
+grep -nE 'update_signals|update_vehicle_state|next_signal_update' \
+    ~/CAN-Sentinel/ecu-simulator/ecu_simulator_step10_working.c
+```
+
+The output confirmed that `next_signal_update` is declared and initialized, that `update_vehicle_state()` is defined and called from the main loop, that the deadline advances by `SIGNAL_UPDATE_US`, and that no references to `update_signals()` remain.
+
+### 10.7 Compile and Verify the Updated Simulator
+
+The working source was compiled from `~/CAN-Sentinel/ecu-simulator` with extra warnings enabled:
+
+```bash
+gcc -Wall -Wextra -Wpedantic \
+    -o ecu_simulator_step10_test \
+    ecu_simulator_step10_working.c
+```
+
+Compilation completed without errors or warnings. The executable was then inspected:
+
+```bash
+ls -lh ecu_simulator_step10_test
+file ecu_simulator_step10_test
+```
+
+The output confirmed an executable ELF file of about 18 KB (64-bit x86-64, dynamically linked, build ID `afb67a84d9786dae8e9a5693e4a48155de58c79e`). A final check, `grep -n 'update_signals' ecu_simulator_step10_working.c`, returned no output, so the old function name no longer appears in the source.
+
+### 10.8 Restore and Verify the Virtual CAN Interface
+
+Before the runtime tests, `vcan0` was found to be absent, and the simulator needs it to bind its socket. The module was loaded and the interface recreated as in Step 2:
+
+```bash
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+ip -details link show vcan0
+```
+
+The output showed the interface `vcan0` with flags `NOARP, UP, LOWER_UP`, link type CAN, MTU 2060, and state `UNKNOWN`. The `UNKNOWN` state is normal for a virtual CAN interface; the `UP` and `LOWER_UP` flags confirm that it is enabled.
+
+
+### 10.9 Validate the Brake Signal
+
+The simulator was run on `vcan0`, and brake frames were captured with `candump` filtered for CAN ID `0x0A0`. The capture showed:
+
+- DLC 8 on CAN ID `0x0A0`.
+- Byte 0 (brake pressure) bounded between 0 and 100.
+- Byte 1 (brake switch): `0x00` = off, `0x01` = on.
+- With the switch at `0x01`, pressure increased gradually and reached the maximum of 100 (`0x64`).
+- After the switch returned to `0x00`, pressure decreased gradually toward zero.
+- Byte 7 (rolling counter) advanced with successive frames.
+
+The brake signal therefore follows the simulated switch state, and the pressure stays within its configured range.
+
+![Brake Signal Validation](screenshots/29-brake-signal-validation.png)
+
+**Screenshot 29:** `candump` capture of CAN ID `0x0A0` showing the switch change and the pressure response.
+
+### 10.10 Validate the Steering Signal
+
+Steering frames were captured with `candump` filtered for CAN ID `0x0B0`. The capture showed:
+
+- DLC 8 on CAN ID `0x0B0`.
+- Bytes 0–1 holding the encoded steering angle.
+- Values changing gradually across successive signal updates.
+- Repeated values across several frames, which is consistent with the 10 ms steering period and the shared 50 ms update interval.
+- Byte 7 (rolling counter) advancing with successive frames.
+
+![Steering Signal Validation](screenshots/30-steering-signal-validation.png)
+
+**Screenshot 30:** `candump` capture of CAN ID `0x0B0`.
+
+### 10.11 Validate the Engine RPM Signal
+
+Engine RPM frames were captured with `candump` filtered for CAN ID `0x100`. The capture showed:
+
+- DLC 8 on CAN ID `0x100`.
+- Bytes 0–1 holding RPM as a big-endian 16-bit integer.
+- Values that change over time, including `0x05F4` (1524 RPM), `0x060B` (1547 RPM), and `0x05ED` (1517 RPM), all within 800–4000 RPM.
+- Byte 7 (rolling counter) advancing and wrapping from `0xFF` to `0x00`.
+
+Source-code inspection confirmed that RPM is calculated from vehicle speed with bounded random variation. The capture confirms the frame format, the counter behavior, and the range, but it does not by itself establish a measured correlation between RPM and speed; that relationship rests on the source code.
+
+![Engine RPM Signal Validation](screenshots/31-rpm-signal-validation.png)
+
+**Screenshot 31:** `candump` capture of CAN ID `0x100`.
+
+### 10.12 Validate the Vehicle Speed Signal
+
+Vehicle-speed frames were captured with `candump` filtered for CAN ID `0x200`. The capture showed:
+
+- DLC 8 on CAN ID `0x200`.
+- Byte 0 holding the speed in km/h.
+- A gradual change from `0x28` (40 km/h) through `0x27`, `0x26`, `0x25`, and `0x24` (39, 38, 37, and 36 km/h), within the 0–130 km/h range.
+- Repeated values across consecutive frames, which is consistent with the 20 ms period and the 50 ms update interval.
+- Byte 7 (rolling counter) advancing with successive frames.
+
+![Vehicle Speed Signal Validation](screenshots/32-speed-signal-validation.png)
+
+**Screenshot 32:** `candump` capture of CAN ID `0x200`.
+
+### 10.13 Validate the Engine Temperature Signal
+
+Engine-temperature frames were captured with `candump` filtered for CAN ID `0x300`. The capture showed:
+
+- DLC 8 on CAN ID `0x300`.
+- Byte 0 holding the temperature in °C plus an offset of 40.
+- Encoded values `0x83`, `0x80`, `0x7A`, and `0x78`, which decode to 91 °C, 88 °C, 82 °C, and 80 °C.
+- Gradual variation within the configured 80–105 °C range.
+- Byte 7 (rolling counter) advancing with successive frames.
+
+![Engine Temperature Signal Validation](screenshots/33-temperature-signal-validation.png)
+
+**Screenshot 33:** `candump` capture of CAN ID `0x300`.
+
+### 10.14 Validate the Infotainment Signal
+
+Infotainment frames were captured with `candump` filtered for CAN ID `0x600`. The capture showed:
+
+- DLC 8 on CAN ID `0x600`.
+- Byte 0 (status) remaining `0x01` for the whole sample.
+- Byte 7 (rolling counter) advancing and wrapping from `0xFF` to `0x00`.
+
+No status transition occurred during this capture, so the sample confirms the frame format and a stable status but does not demonstrate the infrequent status-change behavior.
+
+![Infotainment Signal Validation](screenshots/34-infotainment-signal-validation.png)
+
+**Screenshot 34:** `candump` capture of CAN ID `0x600`.
+
+### 10.15 Correct the Brake-Toggle Timing and Re-validate
+
+The source was corrected so that the brake-toggle deadline is evaluated against the current monotonic time. When the deadline expires, the next toggle deadline is now scheduled relative to the current time rather than to the scheduled signal-update timestamp.
+
+The corrected source was compiled with `-Wall -Wextra -Wpedantic` and produced no warnings or errors. A runtime capture on `vcan0` then showed:
+
+- CAN ID `0x0A0` with DLC 8.
+- Byte 0 (pressure) bounded between 0 and 100, reaching `0x64` (100) while braking was active.
+- After the switch changed to `0x00`, pressure falling from `0x61` (97) through `0x5E` (94), `0x5A` (90), and `0x56` (86).
+- Byte 7 (rolling counter) advancing and wrapping from `0xFF` to `0x00`.
+
+This confirms the expected brake-switch transition and pressure response. The capture does not independently establish the exact randomized toggle interval.
+
+![Brake-Toggle Timing Validation](screenshots/35-brake-toggle-timing-validation.png)
+
+**Screenshot 35:** `candump` capture of CAN ID `0x0A0` after the brake-toggle timing correction.
+
+**Validation summary so far:**
+
+| CAN ID | Signal | Frame and range checked | Counter | Limitation of the capture |
+| :---: | --- | :---: | :---: | --- |
+| `0x0A0` | Brake | ✅ | ✅ | Exact toggle interval not measured |
+| `0x0B0` | Steering | ✅ | ✅ | Gradual change only |
+| `0x100` | Engine RPM | ✅ | ✅ | RPM/speed correlation not measured, only source-confirmed |
+| `0x200` | Vehicle speed | ✅ | ✅ | Short sample |
+| `0x300` | Engine temperature | ✅ | ✅ | Short sample |
+| `0x600` | Infotainment | ✅ | ✅ | No status change observed |
+
+### 10.16 Remaining Work
+
+Step 10 is not complete until the following items are done:
+
+- [ ] **Add the optional random seed.** No seed handling is documented in the steps above, so the working copy still has to be extended. The planned implementation is:
+
+  ```c
+  int main(int argc, char *argv[])
+  {
+      unsigned int seed = (argc > 1) ? (unsigned int)strtoul(argv[1], NULL, 10)
+                                     : (unsigned int)time(NULL);
+      srand(seed);
+      printf("Random seed: %u\n", seed);
+      ...
+  }
+  ```
+
+  `./ecu_simulator 42` should reproduce the same signal sequence, while `./ecu_simulator` without an argument stays random. The seed is printed at start-up so that any run can be repeated.
+- [ ] **Verify reproducibility.** Run the simulator twice with the same seed and compare the decoded signal sequences (not the timestamps, because frame timing varies slightly between runs).
+- [ ] **Re-verify the protocol and rate on the final build.** Repeat 7.1 (frame format and variation), 8.8 (rate), 8.9 (protocol unchanged), and 8.11 (per-ID timing) to confirm that the IDs, DLC, payload layout, counters, and 320 frames/s rate are unchanged. The captures in 10.9–10.15 check signal behavior only; they do not replace the rate and timing checks.
+- [ ] **Bring the source back into the repository.** Copy the final working source to `ecu_sim/ecu_simulator.c` on Windows and verify the hash against the tested Kali copy, as in 8.10.
+- [ ] **Update `ecu_sim/README.md`** with the 50 ms signal-update interval, the brake hold time, and the seed option, then commit and push on `member-1`.
+- [ ] **Add the missing screenshot file names** for Screenshots 26–28 (the HTML comments in 10.1, 10.7, and 10.8).
+
+<!-- Screenshots 36–37 (planned): rate re-verification and same-seed comparison. -->
+
+**Result:** TO ADD after the seed option, the re-verification, and the repository update are complete.
 
 ---
+
 
 ## Step 11: Record the Three 10-Minute Baseline Datasets
 
@@ -2011,7 +2318,7 @@ A small test program checks the protocol without a live capture: all six IDs, DL
 - Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
 - Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter. In one 10-second capture (8.11) individual intervals reached 35–46 ms for the 10 ms and 20 ms ECUs, even though the averages matched the nominal periods. Timing features computed from this traffic (inter-arrival time) will therefore include occasional outliers.
 - Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
-- Signal values are bounded random walks, not a physical vehicle model (improved in Step 10).
+- Signal values are bounded random walks, not a physical vehicle model. Step 10 improves this by deriving RPM from speed and holding the brake switch for 2–6 s, but the signals are still simulated.
 - The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
 
 ---
@@ -2027,6 +2334,110 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 ## Next Steps
 
 1. Follow up on the timing outliers found in 8.11 (idle-VM repeat, share of intervals within ±2 ms, scheduling priority).
-2. Implement and verify signal realism and the seed option (Step 10).
+2. Finish Step 10: add the seed option, re-verify the frame format, rate, and per-ID timing on the final build, update the repository copy and `ecu_sim/README.md`, and commit on `member-1` (10.16).
 3. Record the three 10-minute baseline datasets with Member 3 (Step 11).
 4. Automated payload tests in Week 3 (Step 12).
+
+### Step 10.3.15: Infotainment Status-Change Runtime Validation
+
+The ECU simulator was executed on the `vcan0` virtual CAN interface. Infotainment frames were captured for approximately five minutes using `candump`, filtered for CAN ID `0x600`. The captured output was saved to `/tmp/infotainment_capture.log` and analyzed using `awk`.
+
+The runtime capture produced the following results:
+
+- Total captured infotainment frames: 2,993.
+- CAN ID: `0x600`.
+- DLC: 8 bytes.
+- Byte 0 represented the infotainment status (`0x00` or `0x01`).
+- Status `0x00` appeared in 1,832 captured frames.
+- Status `0x01` appeared in 1,161 captured frames.
+- Five status transitions were observed during the capture.
+- Byte 7 contained the rolling counter, which advanced across successive frames.
+
+The observed transitions were:
+
+| Transition | Status change |
+|---|---|
+| 1 | `0x00` → `0x01` |
+| 2 | `0x01` → `0x00` |
+| 3 | `0x00` → `0x01` |
+| 4 | `0x01` → `0x00` |
+| 5 | `0x00` → `0x01` |
+
+These results demonstrate that the infotainment status changed between its two supported values while CAN ID `0x600` continued transmitting. The randomized status-update logic therefore demonstrated the intended infrequent-change behavior during this runtime sample. The observed transition intervals varied, as expected from the randomized implementation.
+
+Screenshot: `docs/member-1/screenshots/step-10-infotainment-status-change-validation.png`
+
+### Step 10.3.16: Reproducible Build Validation
+
+The ECU simulator source, `ecu_simulator_step10_working.c`, was compiled twice in the Kali Linux environment using GCC 16.2.0 with strict C11 compilation and optimization enabled.
+
+The following compiler flags were used:
+
+```bash
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2
+```
+
+Both clean builds completed successfully without compiler warnings or errors.
+
+The resulting executables, `ecu_simulator_repro_a` and `ecu_simulator_repro_b`, were compared using SHA-256 checksums.
+
+Both executables produced the same SHA-256 hash:
+
+`959ab34c5ac28cb8a585387fc36097bfdcbf43cbcd1a2f640bf531f4d510c0cb`
+
+The matching hashes confirm that repeated builds from the same source produced identical executable files in the tested environment.
+
+During preparation for this validation, feature-test macros were added before the source headers to expose the required networking and POSIX declarations under strict C11 compilation.
+
+Screenshot: `docs/member-1/screenshots/step-10-reproducible-build-validation.png`
+
+### Step 10.3.17: Rebuilt Simulator Runtime Smoke Test
+
+After adding the feature-test macros required for strict C11 compilation, the rebuilt executable `ecu_simulator_repro_a` was tested on the `vcan0` virtual CAN interface.
+
+A runtime capture was performed using:
+
+```bash
+timeout 5s candump -n 30 vcan0
+```
+
+The capture returned 30 CAN frames. All six expected ECU CAN IDs were observed:
+
+| CAN ID | ECU | Expected Period | Observed DLC |
+|---|---|---:|---:|
+| `0x0A0` | Brake | 20 ms | 8 |
+| `0x0B0` | Steering | 10 ms | 8 |
+| `0x100` | Engine RPM | 10 ms | 8 |
+| `0x200` | Vehicle speed | 20 ms | 8 |
+| `0x300` | Temperature | 100 ms | 8 |
+| `0x600` | Infotainment | 100 ms | 8 |
+
+The captured frames used DLC 8, and the observed CAN IDs matched the agreed simulator protocol. This confirms that the rebuilt executable started successfully and continued transmitting the expected ECU frame formats after the compilation fix.
+
+This short smoke test validates basic runtime operation and frame presence; it does not independently revalidate transmission timing, overall frame rate, or all signal behaviors.
+
+Screenshot: `docs/member-1/screenshots/step-10-rebuilt-simulator-smoke-test.png`
+
+### Step 10.3.18: Final Source Audit and Cross-Platform Integrity Verification
+
+The final ECU simulator source was audited in the Kali Linux environment before being transferred to the Windows repository.
+
+The source includes the agreed six-ECU CAN protocol, DLC 8 payloads, rolling counters, periodic transmissions with randomized timing jitter, shared vehicle signal updates, brake-switch behavior, and randomized infotainment status changes.
+
+The source was copied to a final candidate file named `ecu_simulator_final.c`. A comparison confirmed that the candidate was identical to the working source.
+
+The final candidate was transferred from Kali Linux to the Windows development environment using Send Anywhere. SHA-256 checksums were calculated before and after the transfer to verify file integrity.
+
+The following SHA-256 hash was verified on both systems:
+
+`f79ec0981eec2554ef11d62473260bf05b08eeef03f899955f674dab560f91e9`
+
+The verified source was copied into the Windows repository at:
+
+`ecu_sim/ecu_simulator.c`
+
+A subsequent SHA-256 check confirmed that the repository copy matched the transferred final candidate.
+
+This verification confirms that the source file was transferred without detectable content changes. Git status checks, staging, committing, and pushing the final source remain separate repository-management tasks.
+
+Screenshot: `docs/member-1/screenshots/step-10-final-source-hash-verification.png`
