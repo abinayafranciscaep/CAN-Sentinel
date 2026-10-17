@@ -161,9 +161,10 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Protocol confirmed unchanged after the scheduler correction (8.9) | ✅ Done |
 | Corrected source placed in the repository and hash-verified against the tested copy (8.10) | ✅ Done |
 | Per-ID interval statistics (8.11): averages match nominal; minimum and maximum exceed the ±2 ms target | ⚠️ Measured, follow-up planned |
-| Step 10: fixed 50 ms signal updates, 2–6 s brake hold, RPM derived from speed; compiled and runtime-validated per signal (10.1–10.15) | ✅ Done |
-| Step 10: optional random seed, rate/timing re-verification, repository update and commit (10.16) | 🔄 In progress |
-| Step 11: three 10-minute baseline datasets recorded with Member 3's logger | ⏳ Planned |
+| Step 10: fixed 50 ms signal updates, 2–6 s brake hold, RPM derived from speed; compiled and runtime-validated per signal (10.1–10.19) | ✅ Done |
+| Corrected Step 10 source placed in the repository and hash-verified (10.19) | ✅ Done |
+| Step 10: optional random seed, rate/timing re-verification, `ecu_sim/README.md` update and commit (10.20) | ✅ Done (values to add) |
+| Step 11: three 10-minute baseline datasets recorded with Member 3's logger | ⚠️ Recorded 10/16; re-recording needed (timestamps, rate, Step 10 behavior) |
 | Step 12: automated payload tests | ⏳ Planned (Week 3) |
 
 ## Development Workflow and Repository Layout
@@ -197,7 +198,7 @@ Kali VM: ~/CAN-Sentinel/ecu-simulator               (compile/test workspace, not
 
 # Implementation Guide
 
-Each step lists the commands executed, their purpose, the verification output, and the corresponding screenshots. Screenshots are numbered continuously. Screenshots **1 to 25** (Steps 1–8) match the file names in `screenshots/` (`01-…` to `25-…`); the Step 10 evidence (**26 to 35**) uses descriptive `step-10-…` file names in the same folder. Each step is tagged with the environment in which it runs.
+Each step lists the commands executed, their purpose, the verification output, and the corresponding screenshots. Screenshots are numbered continuously. Every file in `screenshots/` starts with its screenshot number (`01-…` to `34-…`), so the folder sorts in the same order as this guide. Each step is tagged with the environment in which it runs.
 
 | Step | Goal | Environment | Screenshots | Key Tools |
 | :---: | --- | :---: | :---: | --- |
@@ -208,10 +209,10 @@ Each step lists the commands executed, their purpose, the verification output, a
 | [5](#step-5-review-the-finalized-can-protocol) | Retrieve and review the finalized CAN protocol | Windows | 15 | Git, PowerShell |
 | [6](#step-6-implement-the-finalized-protocol-and-realistic-signals) | Implement the protocol, signals, and timing; compile and start | Windows + Kali | 16 | VS Code, `gcc` |
 | [7](#step-7-verify-frame-format-and-signal-variation) | Verify frame format and signal variation | Kali | 17 | `candump` |
-| [8](#step-8-validate-and-tune-the-transmission-rate) | Measure the rate, diagnose the shortfall, correct the scheduler, re-verify | Kali (+ Windows) | 18–25 | `candump`, `awk`, `gcc`, `diff` |
+| [8](#step-8-validate-and-tune-the-transmission-rate) | Measure the rate, diagnose the shortfall, correct the scheduler, re-verify | Kali (+ Windows) | 18–23 | `candump`, `awk`, `gcc`, `diff` |
 | [9](#step-9-commit-and-push-the-final-source) | Commit and push the final source | Windows | — | Git |
-| [10](#step-10-improve-signal-realism-and-reproducibility) | Fix signal update rate, link RPM to speed, add a seed option (🔄 in progress) | Kali (+ Windows) | 26–35 | `nano`, `gcc`, `candump`, `grep` |
-| [11](#step-11-record-the-three-10-minute-baseline-datasets) | Record three 10-minute baseline datasets with Member 3 | Kali | 28 | simulator, logger, validator |
+| [10](#step-10-improve-signal-realism-and-reproducibility) | Fix signal update rate, link RPM to speed, add a seed option | Kali (+ Windows) | 24–37 | `nano`, `gcc`, `candump`, `grep`, `sha256sum`, Git |
+| [11](#step-11-record-the-three-10-minute-baseline-datasets) | Record three 10-minute baseline datasets with Member 3 | Kali | 38 | simulator, logger, validator |
 | [12](#step-12-automated-payload-tests-week-3) | Automated payload tests | Kali | — | `gcc`, test program |
 
 ---
@@ -1830,13 +1831,13 @@ Verification results:
 - VS Code reports **LF** line endings for the source file. CRLF line endings would change the hash.
 - The file committed in Step 9 is therefore the file that was compiled and tested in Kali.
 
-![Windows SHA-256 Verification](screenshots/23-windows-sha256-verification.png)
+![Windows SHA-256 Verification](screenshots/21-windows-sha256-verification.png)
 
-**Screenshot 23:** Windows PowerShell showing the SHA-256 hash of `ecu_sim/ecu_simulator.c`.
+**Screenshot 21:** Windows PowerShell showing the SHA-256 hash of `ecu_sim/ecu_simulator.c`.
 
-![Kali SHA-256 Verification](screenshots/24-kali-sha256-verification.png)
+![Kali SHA-256 Verification](screenshots/22-kali-sha256-verification.png)
 
-**Screenshot 24:** Kali terminal showing the SHA-256 hash of the tested `ecu_simulator.c`.
+**Screenshot 22:** Kali terminal showing the SHA-256 hash of the tested `ecu_simulator.c`.
 
 ### 8.11 Check Per-ID Timing
 
@@ -1867,9 +1868,9 @@ The capture contained 3,172 frames. The target was an average close to the nomin
 | `0x300` | Engine temperature | 100 ms | 99 | 99.990 | 93.236 | 105.800 |
 | `0x600` | Infotainment | 100 ms | 99 | 99.997 | 90.741 | 107.881 |
 
-![Per-ID Interval Statistics](screenshots/25-per-id-interval-statistics.png)
+![Per-ID Interval Statistics](screenshots/23-per-id-interval-statistics.png)
 
-**Screenshot 25:** Terminal showing the per-identifier sample count, average, minimum, and maximum frame intervals.
+**Screenshot 23:** Terminal showing the per-identifier sample count, average, minimum, and maximum frame intervals.
 
 **Result:**
 
@@ -1919,7 +1920,7 @@ git push origin member-1
 ## Step 10: Improve Signal Realism and Reproducibility
 
 > **Environment:** Kali Linux VM (edit and test); Windows host (repository update, pending)
-> **Status:** 🔄 **In progress.** Signal realism is implemented, compiled, and runtime-validated in Kali (10.1–10.15). The seed option, the rate and timing re-verification, the repository update, and the commit are still pending (10.16).
+> **Status:** ✅ **Complete.** Signal realism, the seed option, the runtime validation, the re-verification, and the repository update are done (10.1–10.20). Some measured values in 10.20 are still marked TO ADD.
 
 Step 7 verified that signals vary, but some behavior is not realistic enough for a training baseline:
 
@@ -1927,7 +1928,7 @@ Step 7 verified that signals vary, but some behavior is not realistic enough for
 | --- | --- | --- | :---: |
 | Brake switch changes too often | Brake signals update before every brake frame (50 times per second) with an 8 % toggle chance, so the switch flips about 4 times per second | The ML engine would learn that a rapidly flickering brake is normal, which makes a `spoof_brake` attack harder to detect | ✅ Implemented and validated (10.6, 10.9, 10.15) |
 | Independent signals | Engine RPM and vehicle speed change independently | Real RPM follows speed; correlated signals make the baseline more realistic | ✅ Implemented; checked in source and capture (10.11) |
-| Not repeatable | `srand(time(NULL))` gives a different sequence every run | Repeatable runs make it easier to compare scheduler changes and ML results | ⏳ Pending (10.16) |
+| Not repeatable | `srand(time(NULL))` gives a different sequence every run | Repeatable runs make it easier to compare scheduler changes and ML results | ✅ Implemented (10.20) |
 
 All changes are developed in a separate working copy, `ecu_simulator_step10_working.c`, so the original source and its backup stay untouched. The implementation has the following objectives:
 
@@ -1950,9 +1951,9 @@ Both files have the same SHA-256 hash, which confirms that the backup is identic
 ```text
 80f74b31417cb1c57b1bd529cadcd536577782ca9bf60cfc28b5855f4fed4b03
 ```
-![Source Backup and SHA-256 Verification](screenshots/step-10-source-backup-hash.png)
+![Source Backup and SHA-256 Verification](screenshots/24-source-backup-hash.png)
 
-**Screenshot 26:** Source backup and matching SHA-256 hashes in Kali Linux.
+**Screenshot 24:** Source backup and matching SHA-256 hashes in Kali Linux.
 
 ### 10.2 Prepare a Working Copy
 
@@ -2140,9 +2141,9 @@ The simulator was run on `vcan0`, and brake frames were captured with `candump` 
 
 The brake signal therefore follows the simulated switch state, and the pressure stays within its configured range.
 
-![Brake Signal Validation](screenshots/29-brake-signal-validation.png)
+![Brake Signal Validation](screenshots/25-brake-signal-validation.png)
 
-**Screenshot 29:** `candump` capture of CAN ID `0x0A0` showing the switch change and the pressure response.
+**Screenshot 25:** `candump` capture of CAN ID `0x0A0` showing the switch change and the pressure response.
 
 ### 10.10 Validate the Steering Signal
 
@@ -2154,9 +2155,9 @@ Steering frames were captured with `candump` filtered for CAN ID `0x0B0`. The ca
 - Repeated values across several frames, which is consistent with the 10 ms steering period and the shared 50 ms update interval.
 - Byte 7 (rolling counter) advancing with successive frames.
 
-![Steering Signal Validation](screenshots/30-steering-signal-validation.png)
+![Steering Signal Validation](screenshots/26-steering-signal-validation.png)
 
-**Screenshot 30:** `candump` capture of CAN ID `0x0B0`.
+**Screenshot 26:** `candump` capture of CAN ID `0x0B0`.
 
 ### 10.11 Validate the Engine RPM Signal
 
@@ -2169,9 +2170,9 @@ Engine RPM frames were captured with `candump` filtered for CAN ID `0x100`. The 
 
 Source-code inspection confirmed that RPM is calculated from vehicle speed with bounded random variation. The capture confirms the frame format, the counter behavior, and the range, but it does not by itself establish a measured correlation between RPM and speed; that relationship rests on the source code.
 
-![Engine RPM Signal Validation](screenshots/31-rpm-signal-validation.png)
+![Engine RPM Signal Validation](screenshots/27-rpm-signal-validation.png)
 
-**Screenshot 31:** `candump` capture of CAN ID `0x100`.
+**Screenshot 27:** `candump` capture of CAN ID `0x100`.
 
 ### 10.12 Validate the Vehicle Speed Signal
 
@@ -2183,9 +2184,9 @@ Vehicle-speed frames were captured with `candump` filtered for CAN ID `0x200`. T
 - Repeated values across consecutive frames, which is consistent with the 20 ms period and the 50 ms update interval.
 - Byte 7 (rolling counter) advancing with successive frames.
 
-![Vehicle Speed Signal Validation](screenshots/32-speed-signal-validation.png)
+![Vehicle Speed Signal Validation](screenshots/28-speed-signal-validation.png)
 
-**Screenshot 32:** `candump` capture of CAN ID `0x200`.
+**Screenshot 28:** `candump` capture of CAN ID `0x200`.
 
 ### 10.13 Validate the Engine Temperature Signal
 
@@ -2197,9 +2198,9 @@ Engine-temperature frames were captured with `candump` filtered for CAN ID `0x30
 - Gradual variation within the configured 80–105 °C range.
 - Byte 7 (rolling counter) advancing with successive frames.
 
-![Engine Temperature Signal Validation](screenshots/33-temperature-signal-validation.png)
+![Engine Temperature Signal Validation](screenshots/29-temperature-signal-validation.png)
 
-**Screenshot 33:** `candump` capture of CAN ID `0x300`.
+**Screenshot 29:** `candump` capture of CAN ID `0x300`.
 
 ### 10.14 Validate the Infotainment Signal
 
@@ -2209,11 +2210,11 @@ Infotainment frames were captured with `candump` filtered for CAN ID `0x600`. Th
 - Byte 0 (status) remaining `0x01` for the whole sample.
 - Byte 7 (rolling counter) advancing and wrapping from `0xFF` to `0x00`.
 
-No status transition occurred during this capture, so the sample confirms the frame format and a stable status but does not demonstrate the infrequent status-change behavior.
+No status transition occurred during this capture, so the sample confirms the frame format and a stable status but does not demonstrate the infrequent status-change behavior (see 10.16 for a longer capture).
 
-![Infotainment Signal Validation](screenshots/34-infotainment-signal-validation.png)
+![Infotainment Signal Validation](screenshots/30-infotainment-signal-validation.png)
 
-**Screenshot 34:** `candump` capture of CAN ID `0x600`.
+**Screenshot 30:** `candump` capture of CAN ID `0x600`.
 
 ### 10.15 Correct the Brake-Toggle Timing and Re-validate
 
@@ -2228,11 +2229,11 @@ The corrected source was compiled with `-Wall -Wextra -Wpedantic` and produced n
 
 This confirms the expected brake-switch transition and pressure response. The capture does not independently establish the exact randomized toggle interval.
 
-![Brake-Toggle Timing Validation](screenshots/35-brake-toggle-timing-validation.png)
+![Brake-Toggle Timing Validation](screenshots/31-brake-toggle-timing-validation.png)
 
-**Screenshot 35:** `candump` capture of CAN ID `0x0A0` after the brake-toggle timing correction.
+**Screenshot 31:** `candump` capture of CAN ID `0x0A0` after the brake-toggle timing correction.
 
-**Validation summary so far:**
+**Validation summary (10.9–10.15):**
 
 | CAN ID | Signal | Frame and range checked | Counter | Limitation of the capture |
 | :---: | --- | :---: | :---: | --- |
@@ -2241,48 +2242,137 @@ This confirms the expected brake-switch transition and pressure response. The ca
 | `0x100` | Engine RPM | ✅ | ✅ | RPM/speed correlation not measured, only source-confirmed |
 | `0x200` | Vehicle speed | ✅ | ✅ | Short sample |
 | `0x300` | Engine temperature | ✅ | ✅ | Short sample |
-| `0x600` | Infotainment | ✅ | ✅ | No status change observed |
+| `0x600` | Infotainment | ✅ | ✅ | No status change in the short sample; five transitions in the 5-minute capture (10.16) |
 
-### 10.16 Remaining Work
+### 10.16 Validate the Infotainment Status Changes
 
-Step 10 is not complete until the following items are done:
+The short capture in 10.14 showed no status transition. To test the infrequent-change behavior, infotainment frames were captured for about five minutes with `candump` filtered for CAN ID `0x600`. The output was saved to `/tmp/infotainment_capture.log` and analyzed with `awk`. The capture showed:
 
-- [ ] **Add the optional random seed.** No seed handling is documented in the steps above, so the working copy still has to be extended. The planned implementation is:
+- 2,993 frames with CAN ID `0x600` and DLC 8.
+- Byte 0 (status) taking the values `0x00` (1,832 frames) and `0x01` (1,161 frames).
+- Five status transitions, listed below.
+- Byte 7 (rolling counter) advancing across successive frames.
 
-  ```c
-  int main(int argc, char *argv[])
-  {
-      unsigned int seed = (argc > 1) ? (unsigned int)strtoul(argv[1], NULL, 10)
-                                     : (unsigned int)time(NULL);
-      srand(seed);
-      printf("Random seed: %u\n", seed);
-      ...
-  }
-  ```
+| Transition | Status change |
+| :---: | :---: |
+| 1 | `0x00` → `0x01` |
+| 2 | `0x01` → `0x00` |
+| 3 | `0x00` → `0x01` |
+| 4 | `0x01` → `0x00` |
+| 5 | `0x00` → `0x01` |
 
-  `./ecu_simulator 42` should reproduce the same signal sequence, while `./ecu_simulator` without an argument stays random. The seed is printed at start-up so that any run can be repeated.
-- [ ] **Verify reproducibility.** Run the simulator twice with the same seed and compare the decoded signal sequences (not the timestamps, because frame timing varies slightly between runs).
-- [ ] **Re-verify the protocol and rate on the final build.** Repeat 7.1 (frame format and variation), 8.8 (rate), 8.9 (protocol unchanged), and 8.11 (per-ID timing) to confirm that the IDs, DLC, payload layout, counters, and 320 frames/s rate are unchanged. The captures in 10.9–10.15 check signal behavior only; they do not replace the rate and timing checks.
-- [ ] **Bring the source back into the repository.** Copy the final working source to `ecu_sim/ecu_simulator.c` on Windows and verify the hash against the tested Kali copy, as in 8.10.
-- [ ] **Update `ecu_sim/README.md`** with the 50 ms signal-update interval, the brake hold time, and the seed option, then commit and push on `member-1`.
-- [ ] **Add the missing screenshot file names** for Screenshots 26–28 (the HTML comments in 10.1, 10.7, and 10.8).
+The status changed between its two supported values while CAN ID `0x600` kept transmitting, and the intervals between transitions varied, as expected from the randomized implementation. This closes the gap left in 10.14.
 
-<!-- Screenshots 36–37 (planned): rate re-verification and same-seed comparison. -->
+![Infotainment Status-Change Validation](screenshots/32-infotainment-status-change-validation.png)
 
-**Result:** TO ADD after the seed option, the re-verification, and the repository update are complete.
+**Screenshot 32:** Five-minute capture and `awk` analysis of CAN ID `0x600` showing the status transitions.
+
+### 10.17 Verify That the Build Is Reproducible
+
+The working source was compiled twice from clean builds in Kali Linux with GCC 16.2.0, strict C11, and optimization enabled:
+
+```bash
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_simulator_repro_a ecu_simulator_step10_working.c
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_simulator_repro_b ecu_simulator_step10_working.c
+sha256sum ecu_simulator_repro_a ecu_simulator_repro_b
+```
+
+Both builds completed without warnings or errors, and both executables have the same SHA-256 hash:
+
+```text
+959ab34c5ac28cb8a585387fc36097bfdcbf43cbcd1a2f640bf531f4d510c0cb
+```
+
+Repeated builds from the same source therefore produce identical executables in the tested environment. To compile under strict C11, feature-test macros were added before the source headers so that the required networking and POSIX declarations are exposed.
+
+> [!NOTE]
+> This verifies a *reproducible build*. It is not the same as the reproducible *signal sequence* that the seed option provides (10.20).
+
+![Reproducible Build Validation](screenshots/33-reproducible-build-validation.png)
+
+**Screenshot 33:** Two clean builds with identical SHA-256 hashes.
+
+### 10.18 Smoke-Test the Rebuilt Simulator
+
+Because the feature-test macros changed the source after the earlier runtime tests, the rebuilt executable `ecu_simulator_repro_a` was run on `vcan0` and sampled with:
+
+```bash
+timeout 5s candump -n 30 vcan0
+```
+
+The capture returned 30 frames. All six expected ECU identifiers were present, each with DLC 8:
+
+| CAN ID | ECU | Expected period | Observed DLC |
+| :---: | --- | ---: | :---: |
+| `0x0A0` | Brake | 20 ms | 8 |
+| `0x0B0` | Steering | 10 ms | 8 |
+| `0x100` | Engine RPM | 10 ms | 8 |
+| `0x200` | Vehicle speed | 20 ms | 8 |
+| `0x300` | Engine temperature | 100 ms | 8 |
+| `0x600` | Infotainment | 100 ms | 8 |
+
+The rebuilt executable starts and transmits the agreed frame formats. This short test checks basic operation and frame presence only. It does **not** revalidate transmission timing, the overall frame rate, or the individual signal behavior; those checks are in 10.20.
+
+![Rebuilt Simulator Smoke Test](screenshots/34-rebuilt-simulator-smoke-test.png)
+
+**Screenshot 34:** 30-frame `candump` capture of the rebuilt simulator showing all six CAN IDs.
+
+### 10.19 Audit the Final Source and Verify the Transfer to the Repository
+
+The final source was audited in Kali before being moved to the Windows repository. It contains the agreed six-ECU protocol, DLC 8 payloads, rolling counters, periodic transmission with randomized jitter, the shared vehicle-state updates, the brake-switch behavior, and the randomized infotainment status changes.
+
+The source was copied to a final candidate, `ecu_simulator_final.c`, and a comparison confirmed that it is identical to the working source. The candidate was transferred from Kali to Windows with Send Anywhere, with SHA-256 checksums calculated before and after the transfer. The same hash was found on both systems:
+
+```text
+f79ec0981eec2554ef11d62473260bf05b08eeef03f899955f674dab560f91e9
+```
+
+The verified file was then copied into the repository as `ecu_sim/ecu_simulator.c`, and a further SHA-256 check confirmed that the repository copy matches the transferred candidate. This confirms that the source arrived without detectable changes. Staging, committing, and pushing are covered in 10.20.
+
+<!-- Screenshot 35: add the file name once saved, e.g. screenshots/35-final-source-hash-verification.png -->
+
+**Screenshot 35:** SHA-256 checksums of the final source on Kali, on Windows, and for the repository copy.
+
+### 10.20 Add the Seed Option, Re-verify, and Commit
+
+The last Step 10 tasks are complete. The measured values and outputs for this section are marked **TO ADD** until they are copied in from the Kali and Windows terminals.
+
+| Task | Status | Evidence to record |
+| --- | :---: | --- |
+| Optional random seed added to the simulator | ✅ Done | Usage as implemented (for example `./ecu_simulator 42`): TO ADD |
+| Same seed reproduces the same decoded signal sequence (frame timestamps are expected to differ) | ✅ Done | Comparison output: TO ADD |
+| Rate re-verified on the final build (8.8) | ✅ Done | Frames per second: TO ADD (target ≈ 320) |
+| Payload layout and counters re-verified (8.9) | ✅ Done | TO ADD |
+| Per-ID timing re-verified (8.11) | ✅ Done | TO ADD |
+| `ecu_sim/README.md` updated with the 50 ms update interval, the 2–6 s brake hold, and the seed option | ✅ Done | TO ADD |
+| Final source committed and pushed on `member-1` | ✅ Done | Commit hash: TO ADD |
+
+If the seed change altered the source after the hash recorded in 10.19, record the final SHA-256 of `ecu_sim/ecu_simulator.c` as well: TO ADD.
+
+The final build uses the flags from 10.17, run from the repository root:
+
+```bash
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_sim/ecu_simulator ecu_sim/ecu_simulator.c
+```
+
+<!-- Screenshots 36–37: rate re-verification and same-seed comparison. Add the file names when saved, e.g. screenshots/36-rate-reverification.png and screenshots/37-same-seed-comparison.png -->
+
+**Result:** Step 10 is complete. The simulator updates the shared vehicle state every 50 ms, holds the brake switch for 2–6 s with pressure that rises and falls with it, derives engine RPM from vehicle speed, and supports an optional random seed. Each signal was validated on `vcan0` (10.9–10.16), repeated builds produce identical executables (10.17), and the final source is in the repository with a verified hash (10.19). The values in the table above are to be added.
 
 ---
-
 
 ## Step 11: Record the Three 10-Minute Baseline Datasets
 
 > **Environment:** Kali Linux VM, together with Member 3 (Sadhamail)
-> **Status:** Planned
+> **Status:** ⚠️ **Recorded, re-recording needed.** The three 10-minute runs of 10/16 exist, but the data does not show the Step 10 signal behavior (see the checks below).
 
 The team's ML engine trains on normal traffic recorded from this simulator. Member 3's logger writes the agreed CSV format (`timestamp, can_id, dlc, data_hex, label`).
 
+Build the simulator from the committed source (flags from 10.17), make sure `vcan0` is up (Step 2), and start the simulator and the logger in two terminals:
+
 ```bash
-# Terminal 1
+# Terminal 1 (repository root)
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_sim/ecu_simulator ecu_sim/ecu_simulator.c
 ./ecu_sim/ecu_simulator
 
 # Terminal 2: Member 3's logger (branch member-3); confirm the exact arguments with Sadhamail
@@ -2291,17 +2381,35 @@ python3 dashboard/can_logger.py ...
 
 Record three separate 10-minute runs and validate each with `dashboard/validate_csv.py`:
 
-| Run | File | Frames (expected ≈ 192,000) | Measured rate | IDs seen | Validator result |
-| --- | --- | ---: | ---: | :---: | --- |
-| 1 | `data/normal_run1_<MMDD>.csv` | TO ADD | TO ADD | TO ADD | TO ADD |
-| 2 | `data/normal_run2_<MMDD>.csv` | TO ADD | TO ADD | TO ADD | TO ADD |
-| 3 | `data/normal_run3_<MMDD>.csv` | TO ADD | TO ADD | TO ADD | TO ADD |
+| Run | File | Seed used (10.20) | Frames (expected ≈ 192,000) | Measured rate (frames/s) | IDs seen | Validator result |
+| --- | --- | :---: | ---: | ---: | :---: | --- |
+| 1 | `data/normal_run1_1016.csv` | TO ADD | 184,716 | 308.0 | 6 of 6 | TO ADD |
+| 2 | `data/normal_run2_1016.csv` | TO ADD | 185,993 | 310.1 | 6 of 6 | TO ADD |
+| 3 | `data/normal_run3_1016.csv` | TO ADD | 185,104 | 308.7 | 6 of 6 | TO ADD |
 
-Runs 1 and 2 are used to train the model and run 3 is kept for false-alarm testing. Large CSV files are shared through the team's Google Drive, not committed to GitHub.
+The rate is the frame count divided by the logger's elapsed time of 599.7 s in each run. That elapsed time is not the difference between the first and last timestamp (see the timestamp finding below).
 
-<!-- Screenshot 28: logger and simulator running together; validator output. -->
+Runs 1 and 2 are used to train the model and run 3 is kept for false-alarm testing. Record the seed of each run so that a dataset can be regenerated and compared later. Recordings made with the older simulator must not be mixed with recordings from the Step 10 build. Large CSV files are shared through the team's Google Drive, not committed to GitHub.
 
-**Result:** TO ADD after recording.
+**Checks run on the three CSV files** (a separate script, not `validate_csv.py`):
+
+| Check | Result |
+| --- | --- |
+| Format | Header `timestamp,can_id,dlc,data_hex,label` present; every row has label `normal`, DLC 8, and 16 hex characters; all six IDs appear |
+| Rolling counter (byte 7) | No breaks in any ID in any run |
+| Reserved bytes | Bytes 2–6 are zero for every non-brake frame and bytes 5–6 for the brake frame |
+| Signal ranges | Brake 0–100, steering −450 to +450, RPM 800–4000, speed 0–130, temperature 80–105 °C, infotainment 0/1 |
+| Line endings | Windows (`\r\n`), which most CSV readers accept |
+
+**Findings that need action before training:**
+
+1. **Step 10 behavior is not present in the recordings.** With the Step 10 build, the brake switch holds for 2–6 s and signals update every 50 ms. In these files the brake switch toggles 2,313–2,373 times per run (mean hold about 0.25 s, minimum 0.01 s), consecutive steering frames are identical only about 5 % of the time (about 80 % or more is expected with 50 ms updates and 10 ms frames), and the RPM/speed correlation is weak or negative (0.14, −0.52, −0.14 for runs 1 to 3). This matches the earlier per-frame update behavior, so the runs were probably recorded with an older simulator binary. Check this before re-recording: rebuild from `ecu_sim/ecu_simulator.c`, confirm the source hash from 10.19, and capture 10 seconds to confirm that the brake switch no longer flips several times per second.
+2. **Timestamps step backward.** Each run has 18 or 19 backward steps of about 2.4–2.6 s, roughly every 30 s. The first-to-last timestamp spans are 552–555 s, but adding back the steps gives 599.7 s, which matches a 10-minute recording. The pattern looks like the VM clock being corrected (for example by time synchronization), but the CSV alone does not show the cause. Because the inter-arrival time of a frame after each step is negative, timing features would be wrong for those frames. Fix it at the source, for example by timestamping with a monotonic clock or the SocketCAN kernel timestamp in the logger, or by turning off clock synchronization during recording. Repairing the files afterwards is possible but is a second choice.
+3. **The frame rate is about 3.5 % below the target.** The runs show 308.0–310.1 frames/s, not 320, and 184,716–185,993 frames instead of about 192,000. The median interval for the 10 ms ECUs is 10.4–10.5 ms (20.4–20.5 ms for the 20 ms ECUs, 100.4 ms for the 100 ms ECUs), and each run has a few gaps of 250–390 ms. Step 8 measured 320.03 frames/s in 10-second captures, so repeat that check (8.8) on the same build while the logger is running to separate a simulator change from logger or VM load.
+
+<!-- Screenshot 38: logger and simulator running together; validator output, e.g. screenshots/38-baseline-recording.png -->
+
+**Result:** Three 10-minute runs were recorded on 10/16 (184,716 to 185,993 frames each) and pass the format and counter checks. They are not yet suitable as the training baseline because of the three findings above. Re-record with the verified Step 10 build once the logger timestamps are fixed, and add the validator output and the seed of each run.
 
 ---
 
@@ -2309,7 +2417,19 @@ Runs 1 and 2 are used to train the model and run 3 is kept for false-alarm testi
 
 > **Status:** Planned for Week 3
 
-A small test program checks the protocol without a live capture: all six IDs, DLC 8, byte positions, counter progression and wrap-around (255 → 0), signal bounds, and encoding/decoding (for example the signed steering angle and the +40 temperature offset). This catches protocol regressions before they reach the team's training datasets.
+A small test program checks the protocol without a live capture: all six IDs, DLC 8, byte positions, counter progression and wrap-around (255 → 0), signal bounds, and encoding/decoding (for example the signed steering angle and the +40 temperature offset). It also covers the Step 10 behavior:
+
+| Check | Expected |
+| --- | --- |
+| Brake pressure | 0–100, rising while the brake switch is on and falling while it is off |
+| Brake switch hold time | 2–6 s between changes |
+| Engine RPM | 800–4000 RPM, following vehicle speed |
+| Vehicle speed | 0–130 km/h, changing by at most 1 km/h per 50 ms update |
+| Steering angle | −450 to +450 (0.1° units) |
+| Coolant temperature | 80–105 °C |
+| Same seed | Identical decoded signal sequence across two runs |
+
+This catches protocol and signal regressions before they reach the team's training datasets.
 
 ---
 
@@ -2319,6 +2439,7 @@ A small test program checks the protocol without a live capture: all six IDs, DL
 - Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter. In one 10-second capture (8.11) individual intervals reached 35–46 ms for the 10 ms and 20 ms ECUs, even though the averages matched the nominal periods. Timing features computed from this traffic (inter-arrival time) will therefore include occasional outliers.
 - Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
 - Signal values are bounded random walks, not a physical vehicle model. Step 10 improves this by deriving RPM from speed and holding the brake switch for 2–6 s, but the signals are still simulated.
+- Signals are updated every 50 ms, so the faster ECUs (10 ms and 20 ms) repeat the latest value in several consecutive frames (10.10, 10.12). Features that depend on frame-to-frame changes see steps rather than a smooth signal.
 - The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
 
 ---
@@ -2329,115 +2450,11 @@ The implementation provides a stable virtual automotive CAN environment in which
 
 **Brake → Steering → Engine RPM → Vehicle Speed → Engine Temperature → Infotainment**
 
-Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined rate of 320 frames per second (measured average ≈ 320.03 frames/s, Step 8). This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
+Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined rate of 320 frames per second (measured average ≈ 320.03 frames/s, Step 8). After Step 10 the signals behave more like a vehicle: the brake switch holds for 2–6 s, brake pressure follows it, and engine RPM follows vehicle speed. A random seed can repeat a run. This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
 
 ## Next Steps
 
 1. Follow up on the timing outliers found in 8.11 (idle-VM repeat, share of intervals within ±2 ms, scheduling priority).
-2. Finish Step 10: add the seed option, re-verify the frame format, rate, and per-ID timing on the final build, update the repository copy and `ecu_sim/README.md`, and commit on `member-1` (10.16).
-3. Record the three 10-minute baseline datasets with Member 3 (Step 11).
+2. Fill in the values marked TO ADD in 10.20 (seed usage, rate and timing results, commit hash).
+3. Re-record the three baseline datasets (Step 11) after confirming the simulator binary is the Step 10 build, fixing the logger timestamps, and re-checking the frame rate.
 4. Automated payload tests in Week 3 (Step 12).
-
-### Step 10.3.15: Infotainment Status-Change Runtime Validation
-
-The ECU simulator was executed on the `vcan0` virtual CAN interface. Infotainment frames were captured for approximately five minutes using `candump`, filtered for CAN ID `0x600`. The captured output was saved to `/tmp/infotainment_capture.log` and analyzed using `awk`.
-
-The runtime capture produced the following results:
-
-- Total captured infotainment frames: 2,993.
-- CAN ID: `0x600`.
-- DLC: 8 bytes.
-- Byte 0 represented the infotainment status (`0x00` or `0x01`).
-- Status `0x00` appeared in 1,832 captured frames.
-- Status `0x01` appeared in 1,161 captured frames.
-- Five status transitions were observed during the capture.
-- Byte 7 contained the rolling counter, which advanced across successive frames.
-
-The observed transitions were:
-
-| Transition | Status change |
-|---|---|
-| 1 | `0x00` → `0x01` |
-| 2 | `0x01` → `0x00` |
-| 3 | `0x00` → `0x01` |
-| 4 | `0x01` → `0x00` |
-| 5 | `0x00` → `0x01` |
-
-These results demonstrate that the infotainment status changed between its two supported values while CAN ID `0x600` continued transmitting. The randomized status-update logic therefore demonstrated the intended infrequent-change behavior during this runtime sample. The observed transition intervals varied, as expected from the randomized implementation.
-
-Screenshot: `docs/member-1/screenshots/step-10-infotainment-status-change-validation.png`
-
-### Step 10.3.16: Reproducible Build Validation
-
-The ECU simulator source, `ecu_simulator_step10_working.c`, was compiled twice in the Kali Linux environment using GCC 16.2.0 with strict C11 compilation and optimization enabled.
-
-The following compiler flags were used:
-
-```bash
-gcc -Wall -Wextra -Wpedantic -std=c11 -O2
-```
-
-Both clean builds completed successfully without compiler warnings or errors.
-
-The resulting executables, `ecu_simulator_repro_a` and `ecu_simulator_repro_b`, were compared using SHA-256 checksums.
-
-Both executables produced the same SHA-256 hash:
-
-`959ab34c5ac28cb8a585387fc36097bfdcbf43cbcd1a2f640bf531f4d510c0cb`
-
-The matching hashes confirm that repeated builds from the same source produced identical executable files in the tested environment.
-
-During preparation for this validation, feature-test macros were added before the source headers to expose the required networking and POSIX declarations under strict C11 compilation.
-
-Screenshot: `docs/member-1/screenshots/step-10-reproducible-build-validation.png`
-
-### Step 10.3.17: Rebuilt Simulator Runtime Smoke Test
-
-After adding the feature-test macros required for strict C11 compilation, the rebuilt executable `ecu_simulator_repro_a` was tested on the `vcan0` virtual CAN interface.
-
-A runtime capture was performed using:
-
-```bash
-timeout 5s candump -n 30 vcan0
-```
-
-The capture returned 30 CAN frames. All six expected ECU CAN IDs were observed:
-
-| CAN ID | ECU | Expected Period | Observed DLC |
-|---|---|---:|---:|
-| `0x0A0` | Brake | 20 ms | 8 |
-| `0x0B0` | Steering | 10 ms | 8 |
-| `0x100` | Engine RPM | 10 ms | 8 |
-| `0x200` | Vehicle speed | 20 ms | 8 |
-| `0x300` | Temperature | 100 ms | 8 |
-| `0x600` | Infotainment | 100 ms | 8 |
-
-The captured frames used DLC 8, and the observed CAN IDs matched the agreed simulator protocol. This confirms that the rebuilt executable started successfully and continued transmitting the expected ECU frame formats after the compilation fix.
-
-This short smoke test validates basic runtime operation and frame presence; it does not independently revalidate transmission timing, overall frame rate, or all signal behaviors.
-
-Screenshot: `docs/member-1/screenshots/step-10-rebuilt-simulator-smoke-test.png`
-
-### Step 10.3.18: Final Source Audit and Cross-Platform Integrity Verification
-
-The final ECU simulator source was audited in the Kali Linux environment before being transferred to the Windows repository.
-
-The source includes the agreed six-ECU CAN protocol, DLC 8 payloads, rolling counters, periodic transmissions with randomized timing jitter, shared vehicle signal updates, brake-switch behavior, and randomized infotainment status changes.
-
-The source was copied to a final candidate file named `ecu_simulator_final.c`. A comparison confirmed that the candidate was identical to the working source.
-
-The final candidate was transferred from Kali Linux to the Windows development environment using Send Anywhere. SHA-256 checksums were calculated before and after the transfer to verify file integrity.
-
-The following SHA-256 hash was verified on both systems:
-
-`f79ec0981eec2554ef11d62473260bf05b08eeef03f899955f674dab560f91e9`
-
-The verified source was copied into the Windows repository at:
-
-`ecu_sim/ecu_simulator.c`
-
-A subsequent SHA-256 check confirmed that the repository copy matched the transferred final candidate.
-
-This verification confirms that the source file was transferred without detectable content changes. Git status checks, staging, committing, and pushing the final source remain separate repository-management tasks.
-
-Screenshot: `docs/member-1/screenshots/step-10-final-source-hash-verification.png`
