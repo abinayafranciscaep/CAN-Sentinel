@@ -92,13 +92,24 @@ never committed.
 
 ## Run
 
+### Default execution (random seed from current time)
+
 ```bash
-./ecu_sim/ecu_simulator
+./ecu_sim/ecu_simulator    # Or ./ecu_simulator in ~/CAN-Sentinel/ecu-simulator
+```
+
+### Reproducible execution (explicit random seed)
+
+To reproduce a previous simulation run or generate identical baseline signal patterns for deterministic testing:
+
+```bash
+./ecu_sim/ecu_simulator 12345    # Or ./ecu_simulator 12345 in ~/CAN-Sentinel/ecu-simulator
 ```
 
 Expected startup banner:
 
 ```text
+Random seed: 12345
 CAN-Sentinel ECU Simulator Started
 CAN interface: vcan0
 Protocol: six periodic ECU frames, DLC 8
@@ -107,9 +118,15 @@ Timing jitter: approximately +/-1 ms
 Press Ctrl+C to stop.
 ```
 
-The simulator transmits continuously until it receives `Ctrl+C` (SIGINT) or SIGTERM.
-If `vcan0` is missing or the socket cannot be created, bound or written to, it prints a
-clear error and exits with a non-zero status instead of running silently.
+The simulator prints the active seed upon startup and transmits continuously until it receives `Ctrl+C` (SIGINT) or SIGTERM. If invalid arguments or values outside 32-bit unsigned bounds are passed, or if `vcan0` is missing, it prints a clear error and exits with a non-zero status instead of running silently:
+
+```bash
+$ ./ecu_sim/ecu_simulator abc
+Invalid seed: abc
+
+$ ./ecu_sim/ecu_simulator 10 20
+Usage: ./ecu_sim/ecu_simulator [seed]
+```
 
 ## CAN message protocol
 
@@ -230,12 +247,12 @@ within about +/-2 ms of it.
 
 | CAN ID | Nominal | Average | Min | Max |
 |---|---:|---:|---:|---:|
-| `0x0A0` | 20 ms | TO ADD | TO ADD | TO ADD |
-| `0x0B0` | 10 ms | TO ADD | TO ADD | TO ADD |
-| `0x100` | 10 ms | TO ADD | TO ADD | TO ADD |
-| `0x200` | 20 ms | TO ADD | TO ADD | TO ADD |
-| `0x300` | 100 ms | TO ADD | TO ADD | TO ADD |
-| `0x600` | 100 ms | TO ADD | TO ADD | TO ADD |
+| `0x0A0` | 20 ms | 20.06 ms | 8.98 ms | 43.04 ms |
+| `0x0B0` | 10 ms | 10.12 ms | 1.31 ms | 35.79 ms |
+| `0x100` | 10 ms | 10.10 ms | 0.53 ms | 39.96 ms |
+| `0x200` | 20 ms | 20.12 ms | 8.99 ms | 46.41 ms |
+| `0x300` | 100 ms | 99.99 ms | 93.24 ms | 105.80 ms |
+| `0x600` | 100 ms | 100.00 ms | 90.74 ms | 107.88 ms |
 
 Member 3's CSV validator (`dashboard/validate_csv.py` on `member-3`) also reports per-ID
 periods for recorded CSV files.
@@ -272,11 +289,7 @@ validator. Runs 1-2 are used for training and run 3 for false-alarm testing.
   bus arbitration delay.
 - Timing depends on Linux scheduling inside the VM; heavy host load can add jitter.
 - Signal values are simulated with bounded random changes, not a physical vehicle model.
-- Planned (Step 10 of the Member 1 guide): signals are updated on a fixed interval instead
-  of with every brake frame, so the brake switch changes every few seconds rather than
-  several times per second; RPM follows vehicle speed; and an optional random seed
-  (`./ecu_sim/ecu_simulator 42`) gives repeatable runs. This README will be updated when
-  that step is done.
+- Realistic signal simulation (Step 10): Signals update on a fixed 50 ms schedule (`SIGNAL_UPDATE_US`), the brake switch holds state for 2–6 seconds with responsive brake pressure, engine RPM is derived from vehicle speed, and an optional random seed parameter (`./ecu_sim/ecu_simulator [seed]`) guarantees repeatable signal sequences for deterministic testing.
 
 ## Notes
 

@@ -226,14 +226,38 @@ static int send_frame(int socket_fd, ECU *ecu)
     return 0;
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
     int socket_fd;
     struct ifreq interface_request;
     struct sockaddr_can address;
     struct timespec now;
+    unsigned int seed;
+    char *endptr = NULL;
+    unsigned long parsed_seed;
 
-    srand((unsigned int)time(NULL));
+    if (argc > 2) {
+        fprintf(stderr, "Usage: %s [seed]\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    if (argc == 2) {
+        errno = 0;
+        parsed_seed = strtoul(argv[1], &endptr, 10);
+
+        if (errno != 0 || endptr == argv[1] || *endptr != '\0'
+            || parsed_seed > UINT32_MAX) {
+            fprintf(stderr, "Invalid seed: %s\n", argv[1]);
+            return EXIT_FAILURE;
+        }
+
+        seed = (unsigned int)parsed_seed;
+    } else {
+        seed = (unsigned int)time(NULL);
+    }
+
+    srand(seed);
+    printf("Random seed: %u\n", seed);
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
