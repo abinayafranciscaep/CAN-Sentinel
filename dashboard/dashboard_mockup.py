@@ -23,8 +23,18 @@ import sys
 from collections import deque
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPixmap, QKeySequence, QShortcut, QTransform
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QImage,
+    QKeySequence,
+    QLinearGradient,
+    QPainter,
+    QPixmap,
+    QShortcut,
+    QTransform,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -68,7 +78,7 @@ CAR_IMAGE_PATH = next(
 # ---------------------------------------------------------------------------
 
 SAMPLE_THREAT = 25
-SAMPLE_FPS = "320"
+SAMPLE_FPS = "308"  # about the rate seen in the Oct 16 ecu_simulator recordings
 SAMPLE_ROWS = [
     ("1791300000.123456", "0x0A0", "8", "3201000000000017", "OK"),
     ("1791300000.133502", "0x0B0", "8", "00FA000000000042", "OK"),
@@ -123,15 +133,22 @@ def find_recording(data_dir):
 def load_recording(path, n=5):
     """
     One pass over a recorded CSV.
-    Returns (last_n_rows, frames_per_second, filename) or None on any problem.
+    Returns (last_n_rows, frames_per_second, filename, clock_steps) or None.
     Rows are (timestamp, can_id, dlc, data_hex, status).
+
+    Frames per second uses only forward-moving time. Our Oct 16 recordings
+    contain timestamps that step backwards (about 2.5 s every 30 s), so
+    (last - first) would understate the duration and overstate the rate.
+    clock_steps is the number of backward steps found in the file.
     """
     if path is None:
         return None
 
     tail = deque(maxlen=n)
     count = 0
-    first_ts = last_ts = None
+    prev = None
+    forward = 0.0
+    clock_steps = 0
 
     try:
         with open(path, newline="", encoding="utf-8") as f:
@@ -140,20 +157,24 @@ def load_recording(path, n=5):
                 return None
             for r in reader:
                 ts = float(r["timestamp"])
-                if first_ts is None:
-                    first_ts = ts
-                last_ts = ts
+                if prev is not None:
+                    d = ts - prev
+                    if d >= 0:
+                        forward += d
+                    else:
+                        clock_steps += 1
+                prev = ts
                 count += 1
                 status = "OK" if r["label"] == "normal" else "ALERT"
                 tail.append((r["timestamp"], r["can_id"], r["dlc"], r["data_hex"], status))
     except (OSError, ValueError, KeyError):
         return None
 
-    if count < 2 or last_ts is None or last_ts <= first_ts:
+    if count < 2 or forward <= 0:
         return None
 
-    fps = count / (last_ts - first_ts)
-    return list(tail), fps, Path(path).name
+    fps = (count - 1) / forward
+    return list(tail), fps, Path(path).name, clock_steps
 
 
 # Load everything once at start-up.
@@ -161,10 +182,10 @@ ALERT = load_alert(ALERT_FILE)
 RECORDING = load_recording(find_recording(DATA_DIR))
 
 if RECORDING:
-    ROWS, _fps, RECORDING_NAME = RECORDING
+    ROWS, _fps, RECORDING_NAME, CLOCK_STEPS = RECORDING
     FRAMES_PER_SECOND = f"{_fps:.0f}"
 else:
-    ROWS, FRAMES_PER_SECOND, RECORDING_NAME = SAMPLE_ROWS, SAMPLE_FPS, None
+    ROWS, FRAMES_PER_SECOND, RECORDING_NAME, CLOCK_STEPS = SAMPLE_ROWS, SAMPLE_FPS, None, 0
 
 if ALERT:
     # Placeholder mapping: confidence -> 0-100. Agree the real one with the ML lead.
@@ -390,6 +411,102 @@ def make_card(title, value, color, size=30):
     return card
 
 
+class HeroPanel(QWidget):
+    """
+    Top section of the dashboard. It paints the car image onto the navy
+    background so the car merges into the page instead of sitting in a box:
+
+    - Screen blend mode makes the image's black background disappear.
+    - Soft alpha fades on the left, top, bottom and right edges remove any
+      hard edge that is left.
+
+    The title, cards and gauge are normal child widgets in this panel's
+    layout. Its right margin is kept clear so they do not sit on the car.
+    """
+
+    BACKGROUND = QColor("#07111F")
+    CAR_SHARE = 0.38      # fraction of the panel width reserved for the car
+
+    def __init__(self, pixmap):
+        super().__init__()
+        self.setObjectName("hero")
+        self._source = pixmap
+        self._car = None
+        self._car_size = None
+
+    def _build_car(self, box_w, box_h):
+        """Scale the car to fit the box and fade its edges to transparent."""
+        scaled = self._source.scaled(
+            QSize(box_w, box_h),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        img = QImage(scaled.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(img)
+        painter.drawPixmap(0, 0, scaled)
+
+        # DestinationIn multiplies the image alpha by the gradient alpha.
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_DestinationIn
+        )
+
+        def fade(x1, y1, stops):
+            grad = QLinearGradient(0, 0, x1, y1)
+            for position, alpha in stops:
+                grad.setColorAt(position, QColor(0, 0, 0, alpha))
+            painter.fillRect(img.rect(), QBrush(grad))
+
+        # left edge fades in, right edge fades out
+        fade(img.width(), 0, [(0.0, 0), (0.30, 255), (0.88, 255), (1.0, 0)])
+        # top and bottom fade out
+        fade(0, img.height(), [(0.0, 0), (0.12, 255), (0.86, 255), (1.0, 0)])
+
+        painter.end()
+        return img
+
+    def resizeEvent(self, event):
+        """Keep the content column clear of the car as the window changes."""
+        super().resizeEvent(event)
+        layout = self.layout()
+        if layout is not None:
+            layout.setContentsMargins(
+                0, 8, int(self.width() * self.CAR_SHARE), 8
+            )
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self.BACKGROUND)
+
+        if self._source.isNull():
+            painter.setPen(QColor("#9FB4CE"))
+            painter.drawText(
+                self.rect().adjusted(self.width() // 2, 0, 0, 0),
+                Qt.AlignmentFlag.AlignCenter,
+                "CAR IMAGE NOT FOUND\n"
+                "dashboard/assets/can_sentinel_car.png",
+            )
+            return
+
+        box_w = int(self.width() * (self.CAR_SHARE + 0.06))
+        box_h = self.height()
+        if box_w < 10 or box_h < 10:
+            return
+
+        if self._car is None or self._car_size != (box_w, box_h):
+            self._car = self._build_car(box_w, box_h)
+            self._car_size = (box_w, box_h)
+
+        x = self.width() - self._car.width()
+        y = (self.height() - self._car.height()) // 2
+
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_Screen
+        )
+        painter.drawImage(x, y, self._car)
+
+
 class Dashboard(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -429,13 +546,15 @@ class Dashboard(QMainWindow):
         page.setContentsMargins(24, 18, 24, 18)
         page.setSpacing(12)
 
-        # ---------------- Header: title and car image ----------------
+        # ---------------- Hero: title, cards, gauge over the car ----------------
 
-        header = QHBoxLayout()
-        header.setSpacing(8)
+        hero = HeroPanel(self.car_pixmap)
+        hero.setMinimumHeight(340)
+        hero.setMaximumHeight(400)
 
-        title_column = QVBoxLayout()
-        title_column.setSpacing(5)
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(0, 8, 0, 8)
+        hero_layout.setSpacing(12)
 
         title_row = QHBoxLayout()
         title_row.setSpacing(0)
@@ -460,6 +579,8 @@ class Dashboard(QMainWindow):
                 f"traffic: {RECORDING_NAME}" if RECORDING_NAME
                 else "traffic: sample rows"
             )
+            if CLOCK_STEPS:
+                parts.append(f"timestamp clock steps in file: {CLOCK_STEPS}")
             parts.append(
                 f"alert: {ALERT_FILE.name}" if ALERT
                 else "alert: none loaded"
@@ -472,39 +593,10 @@ class Dashboard(QMainWindow):
         demo_label.setObjectName("muted")
         demo_label.setWordWrap(True)
 
-        title_column.addStretch(1)
-        title_column.addLayout(title_row)
-        title_column.addWidget(subtitle)
-        title_column.addWidget(demo_label)
-        title_column.addStretch(1)
-
-        self.car_label = QLabel()
-        self.car_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.car_label.setMinimumSize(300, 170)
-        self.car_label.setMaximumHeight(250)
-        self.car_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding,
-        )
-        self.car_label.setStyleSheet(
-            "background-color: transparent; border: none;"
-        )
-
-        if self.car_pixmap.isNull():
-            self.car_label.setText(
-                "CAR IMAGE NOT FOUND\n\n"
-                "Save your image as:\n"
-                "dashboard/assets/can_sentinel_car.png"
-            )
-            self.car_label.setStyleSheet(
-                "color: #9FB4CE; background: transparent; border: none;"
-            )
-        else:
-            self.update_car_image()
-
-        header.addLayout(title_column, 2)
-        header.addWidget(self.car_label, 3)
-        page.addLayout(header)
+        hero_layout.addLayout(title_row)
+        hero_layout.addWidget(subtitle)
+        hero_layout.addWidget(demo_label)
+        hero_layout.addStretch(1)
 
         # ---------------- Three summary cards ----------------
 
@@ -523,7 +615,7 @@ class Dashboard(QMainWindow):
             make_card("Threat level", name, color)
         )
 
-        page.addLayout(cards)
+        hero_layout.addLayout(cards)
 
         # ---------------- Threat score gauge ----------------
 
@@ -556,7 +648,9 @@ class Dashboard(QMainWindow):
         threat_row.addWidget(gauge, 1)
         threat_row.addWidget(score_value)
 
-        page.addLayout(threat_row)
+        hero_layout.addLayout(threat_row)
+
+        page.addWidget(hero, 1)
 
         # ---------------- Latest alert banner ----------------
 
@@ -649,10 +743,13 @@ class Dashboard(QMainWindow):
         )
 
         badge_text = (
-            f"LAST {len(ROWS)} ROWS OF {RECORDING_NAME}"
+            f"LAST {len(ROWS)} ROWS OF {RECORDING_NAME}  |  ECU SIMULATOR RECORDING"
             if RECORDING_NAME else "SAMPLE DATA"
         )
         sample_badge = QLabel(badge_text)
+        sample_badge.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
         sample_badge.setStyleSheet(
             "color: #8FA9C5;"
             "background-color: #172D46;"
@@ -803,32 +900,6 @@ class Dashboard(QMainWindow):
         )
 
         self.setCentralWidget(root)
-
-    def update_car_image(self):
-        """Resize the car image to fit the header without stretching it."""
-
-        if self.car_pixmap.isNull():
-            return
-
-        target_size = self.car_label.size()
-
-        if target_size.width() < 2 or target_size.height() < 2:
-            return
-
-        self.car_label.setPixmap(
-            self.car_pixmap.scaled(
-                target_size,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
-
-    def resizeEvent(self, event):
-        """Refresh the car image whenever the window is resized."""
-        super().resizeEvent(event)
-
-        if hasattr(self, "car_label"):
-            self.update_car_image()
 
     def set_zoom(self, value):
         """Adjust the interface font size while preserving the dark theme."""
