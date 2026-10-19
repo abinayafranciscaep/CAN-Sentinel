@@ -10,13 +10,27 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-int main(void)
+int main(int argc, char *argv[])
 {
     const char *interface_name = "vcan0";
     int socket_fd;
     struct ifreq ifr;
     struct sockaddr_can address;
     struct can_frame frame;
+
+    if (argc > 2) {
+        fprintf(stderr, "Usage: %s [interface]\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    if (argc == 2) {
+        if (argv[1][0] == '\0' ||
+            strlen(argv[1]) >= IFNAMSIZ) {
+            fprintf(stderr, "Invalid interface name.\n");
+            return EXIT_FAILURE;
+        }
+        interface_name = argv[1];
+    }
 
     socket_fd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
     if (socket_fd < 0) {
