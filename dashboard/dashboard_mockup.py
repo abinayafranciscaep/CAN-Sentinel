@@ -197,6 +197,12 @@ else:
 
 USING_FILES = bool(ALERT) or bool(RECORDING)
 
+# A stand-in alert file is not a detection. Label it so it cannot be mistaken
+# for one. This turns off by itself when the file is renamed to a real alert
+# source (the name no longer starts with "sample").
+IS_SAMPLE_ALERT = bool(ALERT) and ALERT_FILE.name.lower().startswith("sample")
+SAMPLE_TAG = " (sample)" if IS_SAMPLE_ALERT else ""
+
 # ---------------------------------------------------------------------------
 # Style
 # ---------------------------------------------------------------------------
@@ -379,7 +385,7 @@ def make_card(title, value, color, size=30):
         "Threat level": "✓",
     }
 
-    symbol = QLabel(symbols.get(title, "•"))
+    symbol = QLabel(symbols.get(title.replace(" (sample)", ""), "•"))
     symbol.setAlignment(Qt.AlignmentFlag.AlignCenter)
     symbol.setFixedSize(48, 48)
     symbol.setStyleSheet(
@@ -609,10 +615,10 @@ class Dashboard(QMainWindow):
             make_card("Frames / second", FRAMES_PER_SECOND, "#39C5FF")
         )
         cards.addWidget(
-            make_card("Alerts loaded", ALERT_COUNT, "#FFB547")
+            make_card("Alerts loaded" + SAMPLE_TAG, ALERT_COUNT, "#FFB547")
         )
         cards.addWidget(
-            make_card("Threat level", name, color)
+            make_card("Threat level" + SAMPLE_TAG, name, color)
         )
 
         hero_layout.addLayout(cards)
@@ -622,7 +628,7 @@ class Dashboard(QMainWindow):
         threat_row = QHBoxLayout()
         threat_row.setSpacing(12)
 
-        score_title = QLabel("THREAT SCORE")
+        score_title = QLabel("THREAT SCORE" + (" (SAMPLE)" if IS_SAMPLE_ALERT else ""))
         score_title.setStyleSheet(
             "color: #A9BED7; font-size: 12px; font-weight: bold;"
         )
@@ -665,7 +671,10 @@ class Dashboard(QMainWindow):
 
         alert_text = QVBoxLayout()
 
-        alert_title = QLabel("Latest alert")
+        alert_title = QLabel(
+            "Latest alert  —  SAMPLE ALERT, not a detection"
+            if IS_SAMPLE_ALERT else "Latest alert"
+        )
         alert_title.setStyleSheet("color: #B7C8DB; font-size: 12px;")
 
         alert_detail = QLabel()
