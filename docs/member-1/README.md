@@ -2588,3 +2588,5 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 1. **Step 10.21:** Tune scheduler deadline grace threshold and process scheduling priority to stabilize frame rates at 320 frames/s under VM timer latency and concurrent logger contention.
 2. Re-record the three 10-minute baseline datasets (Step 11) using the optimized simulator build after confirming logger monotonic timestamps.
 3. Automated payload tests in Week 3 (Step 12).
+
+Step 10.21
