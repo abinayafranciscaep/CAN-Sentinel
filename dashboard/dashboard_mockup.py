@@ -16,6 +16,7 @@ Car image:
     dashboard/assets/can_sentinel_car.png
 """
 
+from openpyxl.styles import styleable
 import csv
 import html
 import json
@@ -92,7 +93,25 @@ REQUIRED_ALERT_FIELDS = {
     "severity", "affected_system", "detection_layer", "technique",
 }
 REQUIRED_CSV_FIELDS = {"timestamp", "can_id", "dlc", "data_hex", "label"}
+# CAN ID to system-name mapping from the project baseline.
+# CAN ID -> readable system name
+ECU_NAMES = {
+    0x0A0: "brake",
+    0x0B0: "steering",
+    0x100: "engine RPM",
+    0x200: "vehicle speed",
+    0x300: "engine temp",
+    0x600: "infotainment",
+    0x7DF: "diagnostics",
+}
 
+
+def ecu_name(can_id):
+    """Return the readable system name for a known CAN ID."""
+    try:
+        return ECU_NAMES.get(int(str(can_id).strip(), 16))
+    except (ValueError, TypeError):
+        return None
 
 # ---------------------------------------------------------------------------
 # Loaders
@@ -775,9 +794,9 @@ class Dashboard(QMainWindow):
 
         traffic_layout.addLayout(traffic_heading)
 
-        table = QTableWidget(len(ROWS), 5)
+        table = QTableWidget(len(ROWS), 6)
         table.setHorizontalHeaderLabels(
-            ["timestamp", "can_id", "dlc", "data_hex", "status"]
+            ["timestamp", "can_id", "system", "dlc", "data_hex", "status"]
         )
 
         table.horizontalHeader().setSectionResizeMode(
@@ -797,10 +816,27 @@ class Dashboard(QMainWindow):
         table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         for r, row in enumerate(ROWS):
-            for c, value in enumerate(row):
+            system = ecu_name(row[1])
+
+            # Insert system name after CAN ID.
+            shown_row = (
+                row[0],
+                row[1],
+                system if system else "not in baseline",
+                row[2],
+                row[3],
+                row[4],
+            )
+
+            for c, value in enumerate(shown_row):
                 item = QTableWidgetItem(str(value))
 
-                if c == 4:
+                # Unknown CAN IDs get a neutral warning colour.
+                if c == 2 and system is None:
+                    item.setForeground(QColor("#FFB547"))
+
+                # Status is now column index 5.
+                if c == 5:
                     if value == "ALERT":
                         item.setForeground(QColor("#FF5A66"))
                         item.setText("●  ALERT")
