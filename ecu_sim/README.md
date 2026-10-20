@@ -183,8 +183,13 @@ Example frames and how to read them:
 - Each ECU has its own nominal period and next deadline.
 - The next deadline is calculated from the **previous scheduled deadline**, not from the
   time a frame was actually sent, so small delays do not accumulate into drift.
-- If an ECU falls behind by one or more whole periods, the missed deadlines are
-  **skipped** instead of being sent as a catch-up burst, which would distort the baseline.
+- If an ECU falls behind, a bounded slack window (`SCHEDULER_SLACK_PERIODS 5`) allows
+  VM scheduling delays (up to 50 ms) to recover without discarding frames, while larger pauses
+  are skipped to avoid burst flooding.
+- For short intervals (< 2 ms), `sched_yield()` is used instead of `nanosleep()` to prevent
+  hypervisor timer oversleep on high-frequency frames.
+- Process scheduling priority is elevated via `nice(-10)` to protect transmission timing
+  from background logging load.
 - About +/-1 ms of random jitter is applied to every interval and averages to zero, so the
   long-run rate equals the nominal rate.
 

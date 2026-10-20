@@ -6,6 +6,7 @@
 #include <linux/can.h>
 #include <linux/can/raw.h>
 #include <net/if.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -22,6 +23,7 @@
 #define SIGNAL_UPDATE_US 50000L
 #define BRAKE_HOLD_MIN_US 2000000L
 #define BRAKE_HOLD_MAX_US 6000000L
+#define SCHEDULER_SLACK_PERIODS 5
 
 typedef struct {
     canid_t can_id;
@@ -259,6 +261,10 @@ int main(int argc, char *argv[])
     srand(seed);
     printf("Random seed: %u\n", seed);
 
+    /* Attempt to elevate scheduling priority to minimize VM timer jitter.
+       If running without CAP_SYS_NICE, this fails silently and continues. */
+    (void)nice(-10);
+
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
@@ -360,9 +366,12 @@ int main(int argc, char *argv[])
                 struct timespec next_deadline =
                     add_us(ecus[i].next_send, interval);
 
-                /* Skip missed deadlines instead of accumulating drift
-                   or sending bursts of catch-up frames. */
-                while (timespec_diff_us(&now, &next_deadline) >= 0) {
+                /* Allow bounded slack for minor VM/kernel timer jitter.
+                   Only skip deadlines if lagging behind by more than the
+                   slack threshold, preventing artificial frame drops. */
+                long max_slack_us = ecus[i].period_us * SCHEDULER_SLACK_PERIODS;
+
+                while (timespec_diff_us(&now, &next_deadline) > max_slack_us) {
                     next_deadline = add_us(next_deadline, interval);
                 }
 
@@ -387,7 +396,7 @@ int main(int argc, char *argv[])
 
             long wait_us = timespec_diff_us(&earliest, &now);
 
-            if (wait_us > 0) {
+            if (wait_us >= 2000L) {
                 struct timespec delay = {
                     .tv_sec = wait_us / 1000000L,
                     .tv_nsec = (wait_us % 1000000L) * 1000L
@@ -397,6 +406,10 @@ int main(int argc, char *argv[])
                        && errno == EINTR && running) {
                     /* Resume sleep after an interrupt. */
                 }
+            } else if (wait_us > 0) {
+                /* For very short intervals (< 2 ms), avoid kernel timer
+                   oversleep inside VirtualBox by yielding the CPU slice. */
+                sched_yield();
             }
         }
     }
