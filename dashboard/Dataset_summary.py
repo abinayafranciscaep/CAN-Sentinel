@@ -128,8 +128,38 @@ def summarise(path, duration):
         implied = n * med_ms / 1000
         print(f"  {cid:<7} {n:>8} {mean_ms:>9.2f} {med_ms:>10.2f} {nom_s:>8} "
               f"{dev:>16} {implied:>11.1f} s")
+    
+    # Dataset quality summary
+    expected_ids = set(EXPECTED_MS)
+    observed_ids = set(ids)
+    unexpected_ids = observed_ids - expected_ids
+    unexpected_labels = set(labels) - {"normal", "attack"}
+
+    warnings = []
+
+    if backwards:
+        warnings.append(f"{backwards} backward timestamp step(s)")
+
+    if unexpected_ids:
+        warnings.append(
+            "unexpected CAN IDs: " + ", ".join(sorted(unexpected_ids))
+        )
+
+    if unexpected_labels:
+        warnings.append(
+            "unexpected labels: " + ", ".join(sorted(unexpected_labels))
+        )
+
+    if warnings:
+        print("  DATASET QUALITY: WARNING")
+        for warning in warnings:
+            print(f"    - {warning}")
+    else:
+        print("  DATASET QUALITY: PASS (basic checks only)")
+
     print()
     return True
+
 
 
 def main():
