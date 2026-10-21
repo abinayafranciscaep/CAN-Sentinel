@@ -288,6 +288,18 @@ Plan: three 10-minute runs saved as `data/normal_run1_<MMDD>.csv`,
 `data/normal_run2_<MMDD>.csv` and `data/normal_run3_<MMDD>.csv`, each checked with the
 validator. Runs 1-2 are used for training and run 3 for false-alarm testing.
 
+## Automated payload and protocol tests (Step 12)
+
+A dedicated test suite (`test_payloads.c`) tests frame formats, 255 -> 0 counter wrapping, signed steering decoding, +40 temperature offset, dynamic coupling, and deterministic seed reproducibility without requiring a live SocketCAN network:
+
+```bash
+# Compile
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_sim/test_payloads ecu_sim/test_payloads.c
+
+# Run tests
+./ecu_sim/test_payloads    # Or ./test_payloads in ~/CAN-Sentinel/ecu-simulator
+```
+
 ## Known limitations
 
 - Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing or

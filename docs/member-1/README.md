@@ -166,7 +166,7 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Step 10: optional random seed, rate/timing re-verification, `ecu_sim/README.md` update and commit (10.20) | ✅ Done |
 | Step 10: bounded-slack scheduler tuning & rate stabilization under VM contention (10.21) | ✅ Done |
 | Step 11: three 10-minute baseline datasets recorded with Member 3's logger | ⚠️ Recorded 10/16; re-recording needed (timestamps, rate, Step 10 behavior) |
-| Step 12: automated payload tests | ⏳ Planned (Week 3) |
+| Step 12: automated payload tests (`test_payloads.c`) | ✅ Done (7/7 unit tests passed) |
 
 ## Development Workflow and Repository Layout
 
@@ -2651,7 +2651,7 @@ Runs 1 and 2 are used to train the model and run 3 is kept for false-alarm testi
 2. **Timestamps step backward.** Each run has 18 or 19 backward steps of about 2.4–2.6 s, roughly every 30 s. The first-to-last timestamp spans are 552–555 s, but adding back the steps gives 599.7 s, which matches a 10-minute recording. The pattern looks like the VM clock being corrected (for example by time synchronization), but the CSV alone does not show the cause. Because the inter-arrival time of a frame after each step is negative, timing features would be wrong for those frames. Fix it at the source, for example by timestamping with a monotonic clock or the SocketCAN kernel timestamp in the logger, or by turning off clock synchronization during recording. Repairing the files afterwards is possible but is a second choice.
 3. **The frame rate is about 3.5 % below the target.** The runs show 308.0–310.1 frames/s, not 320, and 184,716–185,993 frames instead of about 192,000. The median interval for the 10 ms ECUs is 10.4–10.5 ms (20.4–20.5 ms for the 20 ms ECUs, 100.4 ms for the 100 ms ECUs), and each run has a few gaps of 250–390 ms. Step 8 measured 320.03 frames/s in 10-second captures, so repeat that check (8.8) on the same build while the logger is running to separate a simulator change from logger or VM load.
 
-<!-- Screenshot 38: logger and simulator running together; validator output, e.g. screenshots/38-baseline-recording.png -->
+<!-- Screenshot 39: logger and simulator running together; validator output, e.g. screenshots/39-baseline-recording.png -->
 
 **Result:** Three 10-minute runs were recorded on 10/16 (184,716 to 185,993 frames each) and pass the format and counter checks. They are not yet suitable as the training baseline because of the three findings above. Re-record with the verified Step 10 build once the logger timestamps are fixed, and add the validator output and the seed of each run.
 
@@ -2659,21 +2659,57 @@ Runs 1 and 2 are used to train the model and run 3 is kept for false-alarm testi
 
 ## Step 12: Automated Payload Tests (Week 3)
 
-> **Status:** Planned for Week 3
+> **Environment:** Kali Linux VM (compile and run)
+> **Status:** ✅ **Implemented and Verified.** The automated unit test suite `ecu_sim/test_payloads.c` verifies the protocol, signal boundaries, encoding logic, and Step 10 behavioral coupling in-memory without requiring live network captures.
 
-A small test program checks the protocol without a live capture: all six IDs, DLC 8, byte positions, counter progression and wrap-around (255 → 0), signal bounds, and encoding/decoding (for example the signed steering angle and the +40 temperature offset). It also covers the Step 10 behavior:
+### Test Scope & Coverage
 
-| Check | Expected |
-| --- | --- |
-| Brake pressure | 0–100, rising while the brake switch is on and falling while it is off |
-| Brake switch hold time | 2–6 s between changes |
-| Engine RPM | 800–4000 RPM, following vehicle speed |
-| Vehicle speed | 0–130 km/h, changing by at most 1 km/h per 50 ms update |
-| Steering angle | −450 to +450 (0.1° units) |
-| Coolant temperature | 80–105 °C |
-| Same seed | Identical decoded signal sequence across two runs |
+| Test Case | Description | Verification Criteria | Status |
+| :---: | --- | --- | :---: |
+| **Test 1** | Frame Format & DLC | All 6 IDs (`0x0A0`–`0x600`), DLC 8, reserved payload bytes strictly `0x00` | ✅ PASS |
+| **Test 2** | Counter Progression | Independent 0–255 sequential increment with 255 → 0 wrap-around | ✅ PASS |
+| **Test 3** | Steering Angle Encoding | Signed 16-bit big-endian encoding in 0.1° units across `[-450, +450]` (`-45.0°` to `+45.0°`) | ✅ PASS |
+| **Test 4** | Engine Temperature | Linear encoding with `+40` offset (80–105 °C $\rightarrow$ raw byte `120`–`145`) | ✅ PASS |
+| **Test 5** | Brake Pressure Dynamics | Pressure rises with switch ON, falls with switch OFF, clamped to `[0, 100]` | ✅ PASS |
+| **Test 6** | RPM & Speed Coupling | Engine RPM strictly follows `800 + speed * 25 ± 50` bounded to `[800, 4000]` | ✅ PASS |
+| **Test 7** | Seed Reproducibility | Two runs with identical seeds produce byte-for-byte identical CAN payloads | ✅ PASS |
 
-This catches protocol and signal regressions before they reach the team's training datasets.
+### Compilation and Execution
+
+**In the Kali workspace (`~/CAN-Sentinel/ecu-simulator`):**
+```bash
+# Compile the automated test runner
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o test_payloads test_payloads.c
+
+# Execute tests
+./test_payloads
+```
+
+Expected runner output:
+```text
+====================================================
+   CAN-Sentinel Automated Payload & Protocol Tests   
+====================================================
+
+[PASS] Test 1: Frame Format (All 6 IDs, DLC 8, reserved bytes 0x00)
+[PASS] Test 2: Counter Progression & Wrap-around (255 -> 0)
+[PASS] Test 3: Steering Angle Encoding (-45.0 to +45.0 deg signed)
+[PASS] Test 4: Engine Temperature Encoding (+40 offset, 80-105 C)
+[PASS] Test 5: Brake Pressure & Switch Dynamic Coupling (0-100)
+[PASS] Test 6: Engine RPM & Vehicle Speed Coupling (RPM = 800 + speed*25)
+[PASS] Test 7: Deterministic Seed Reproducibility (Identical payloads)
+
+====================================================
+Results: 7 / 7 tests passed (0 failed).
+====================================================
+```
+
+<!-- Screenshot 40: Automated payload and protocol test suite execution passing 7/7 tests -->
+![Automated Payload Tests](screenshots/40-automated-payload-tests.png)
+
+**Screenshot 40:** Terminal execution of the automated payload test suite `test_payloads` verifying all 7 test suites pass.
+
+**Result:** Step 12 is complete. The automated test suite catches regressions in frame formatting, signal clipping, signed big-endian encoding, and seed reproducibility before simulator builds are deployed or recorded.
 
 ---
 
