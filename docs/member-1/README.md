@@ -41,6 +41,7 @@
   - [Step 10: Improve Signal Realism and Reproducibility](#step-10-improve-signal-realism-and-reproducibility)
   - [Step 11: Record the Three 10-Minute Baseline Datasets](#step-11-record-the-three-10-minute-baseline-datasets)
   - [Step 12: Automated Payload Tests (Week 3)](#step-12-automated-payload-tests-week-3)
+    - [Step 12.1: Unified Build Automation (Makefile)](#step-121-unified-build-automation-makefile)
 - [Known Limitations](#known-limitations)
 - [Expected Outcome](#expected-outcome)
 - [Next Steps](#next-steps)
@@ -167,6 +168,7 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Step 10: bounded-slack scheduler tuning & rate stabilization under VM contention (10.21) | ✅ Done |
 | Step 11: three 10-minute baseline datasets recorded with Member 3's logger | ⚠️ Recorded 10/16; re-recording needed (timestamps, rate, Step 10 behavior) |
 | Step 12: automated payload tests (`test_payloads.c`) | ✅ Done (7/7 unit tests passed) |
+| Step 12.1: unified build automation & test harness (`Makefile`) | ✅ Done |
 
 ## Development Workflow and Repository Layout
 
@@ -2710,6 +2712,41 @@ Results: 7 / 7 tests passed (0 failed).
 **Screenshot 40:** Terminal execution of the automated payload test suite `test_payloads` verifying all 7 test suites pass.
 
 **Result:** Step 12 is complete. The automated test suite catches regressions in frame formatting, signal clipping, signed big-endian encoding, and seed reproducibility before simulator builds are deployed or recorded.
+
+### Step 12.1: Unified Build Automation (`Makefile`)
+
+> **Environment:** Kali Linux VM (compile and run)
+> **Status:** 🟢 **Implemented.** To replace manual, repetitive `gcc` invocations and enforce strict compiler optimization and warning flags across the team, a modular GNU `Makefile` was created in `ecu_sim/`.
+
+#### Targets and Capabilities
+
+| Target | Command | Action & Verification Criteria |
+| :---: | :--- | :--- |
+| **`all`** | `make` or `make all` | Compiles both `ecu_simulator` and `test_payloads` using `-Wall -Wextra -Wpedantic -std=c11 -O2`. Uses timestamp dependency tracking so clean builds don't recompile. |
+| **`test`** | `make test` | Builds `test_payloads` if modified, then immediately executes the automated unit test suite. |
+| **`setup-vcan`** | `make setup-vcan` | Checks if `vcan0` is active. If missing, loads `vcan` kernel module and creates and configures the virtual CAN network interface. |
+| **`clean`** | `make clean` | Safely removes compiled build artifacts (`rm -f ecu_simulator test_payloads`). |
+| **`help`** | `make help` | Displays an interactive help menu with target descriptions. |
+
+#### Verification Procedure in Kali Linux
+In `~/CAN-Sentinel/ecu-simulator`:
+```bash
+# 1. Clean previous build artifacts
+make clean
+
+# 2. Build both simulator and test runner with strict flags
+make
+
+# 3. Execute unit test harness
+make test
+```
+
+<!-- Screenshot 41: Makefile build automation execution (make clean, make, make test) -->
+![Build Automation](screenshots/41-makefile-build-automation.png)
+
+**Screenshot 41:** Execution of the unified GNU `Makefile` build automation system verifying `make clean`, `make all`, and automated test suite execution via `make test`.
+
+**Result:** Step 12.1 is complete. Build automation enforces consistent compiler flags, accelerates test execution, and eliminates manual compilation errors across development and test environments.
 
 ---
 

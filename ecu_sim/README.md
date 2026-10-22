@@ -74,21 +74,47 @@ needed. `vcan0` is not persistent and must be recreated after a reboot.
 
 ## Compile
 
+### Standard Build Automation (`Makefile`)
+
+The primary and recommended build method uses the unified `Makefile`:
+
+```bash
+# Compile both the simulator and the automated test runner
+make
+
+# Or from repository root:
+make -C ecu_sim
+```
+
+Available build targets:
+
+| Command | Action | Description |
+| :--- | :--- | :--- |
+| `make` / `make all` | Compile binaries | Builds `ecu_simulator` and `test_payloads` with `-Wall -Wextra -Wpedantic -std=c11 -O2` |
+| `make test` | Run test suite | Compiles and executes the 7/7 automated unit test suite |
+| `make setup-vcan` | Setup network | Checks and configures the Linux `vcan0` virtual interface |
+| `make clean` | Clean workspace | Safely deletes compiled executable binaries |
+| `make help` | Help menu | Prints target descriptions and usage guide |
+
+### Alternative: Manual Compilation (without Make)
+
+You can also compile individual binaries manually using direct `gcc` commands:
+
 From the repository root:
 
 ```bash
-gcc -Wall -Wextra -o ecu_sim/ecu_simulator ecu_sim/ecu_simulator.c
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_sim/ecu_simulator ecu_sim/ecu_simulator.c
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_sim/test_payloads ecu_sim/test_payloads.c
 ```
 
 From a separate test directory (for example a Kali workspace copy):
 
 ```bash
-gcc -Wall -Wextra -o ecu_simulator ecu_simulator.c
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_simulator ecu_simulator.c
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o test_payloads test_payloads.c
 ```
 
-The source compiles with GCC 16.2.0 without warnings or errors. The executable
-`ecu_sim/ecu_simulator` is a build artifact; it is listed in `.gitignore` and is
-never committed.
+The source compiles with GCC without warnings or errors under `-Wall -Wextra -Wpedantic -std=c11 -O2`. The compiled binaries (`ecu_simulator` and `test_payloads`) are build artifacts listed in `.gitignore` and are never committed.
 
 ## Run
 
@@ -293,10 +319,11 @@ validator. Runs 1-2 are used for training and run 3 for false-alarm testing.
 A dedicated test suite (`test_payloads.c`) tests frame formats, 255 -> 0 counter wrapping, signed steering decoding, +40 temperature offset, dynamic coupling, and deterministic seed reproducibility without requiring a live SocketCAN network:
 
 ```bash
-# Compile
-gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_sim/test_payloads ecu_sim/test_payloads.c
+# Recommended: build and execute test suite with Make
+make test
 
-# Run tests
+# Alternative manual build & run
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_sim/test_payloads ecu_sim/test_payloads.c
 ./ecu_sim/test_payloads    # Or ./test_payloads in ~/CAN-Sentinel/ecu-simulator
 ```
 
