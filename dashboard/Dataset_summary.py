@@ -135,19 +135,19 @@ def summarise(path, duration):
     unexpected_ids = observed_ids - expected_ids
     unexpected_labels = set(labels) - {"normal", "attack"}
 
+     # Basic dataset quality warnings
     warnings = []
 
     if backwards:
-        warnings.append(f"{backwards} backward timestamp step(s)")
-
-    if unexpected_ids:
         warnings.append(
-            "unexpected CAN IDs: " + ", ".join(sorted(unexpected_ids))
+            f"{backwards} backward timestamp step(s)"
         )
 
-    if unexpected_labels:
+    unexpected_ids = set(ids) - set(EXPECTED_MS)
+    if unexpected_ids:
         warnings.append(
-            "unexpected labels: " + ", ".join(sorted(unexpected_labels))
+            "Unexpected CAN IDs: "
+            + ", ".join(sorted(unexpected_ids))
         )
 
     if warnings:
@@ -156,8 +156,8 @@ def summarise(path, duration):
             print(f"    - {warning}")
     else:
         print("  DATASET QUALITY: PASS (basic checks only)")
-
-    print()
+   
+    print()    
     return True
 
 
