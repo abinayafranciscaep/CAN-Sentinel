@@ -1,0 +1,112 @@
+"""
+CAN-Sentinel: live detector (Week 3 integration).
+
+Reads frames from the C sniffer over a Unix domain socket (one JSON object per
+line, as agreed in docs/week1_design.md Section 5.2), keeps a sliding window,
+runs the same three detection layers as detect.py, and writes alert JSON lines
+for the dashboard.
+
+Until the sniffer bridge is ready, --replay feeds a recorded CSV through the
+same code path, so the integration can be tested now.
+
+Usage (from the repository root):
+    python ml_engine/live_detector.py                       # live, from the sniffer socket
+    python ml_engine/live_detector.py --replay data/flood_run1_1013.csv
+
+Author: Abinaya Francisca EP (Team Lead)
+"""
+
+import argparse
+import json
+import socket
+import time
+from collections import deque
+
+import pandas as pd
+
+from alerts import to_json_line
+from detect import Detector
+from features import normalise_id, payload_entropy
+from train_model import MODEL_PATH
+
+SOCKET_PATH = "/tmp/can_sentinel.sock"
+ALERT_FILE = "alerts.jsonl"
+
+
+def frames_from_socket(path):
+    """Yield frame dicts from the sniffer's Unix domain socket."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.connect(path)
+        buffer = ""
+        while True:
+            chunk = s.recv(4096).decode("utf-8", errors="replace")
+            if not chunk:
+                return
+            buffer += chunk
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                if line.strip():
+                    yield json.loads(line)
+
+
+def frames_from_csv(path, realtime=False):
+    """Yield frame dicts from a recorded CSV (replay mode)."""
+    df = pd.read_csv(path).sort_values("timestamp")
+    previous = None
+    for row in df.itertuples(index=False):
+        if realtime and previous is not None:
+            time.sleep(max(0.0, row.timestamp - previous))
+        previous = row.timestamp
+        yield {"timestamp": row.timestamp, "can_id": row.can_id, "dlc": row.dlc,
+               "data_hex": "" if pd.isna(row.data_hex) else str(row.data_hex)}
+
+
+def to_frame_table(window):
+    df = pd.DataFrame(list(window))
+    df["can_id"] = df["can_id"].map(normalise_id)
+    df["data_hex"] = df["data_hex"].fillna("").astype(str)
+    df["payload_entropy"] = df["data_hex"].map(payload_entropy)
+    df["dlc_mismatch"] = (df["data_hex"].str.len() != df["dlc"] * 2).astype(int)
+    df["is_unknown_id"] = 0
+    df["label"] = "unknown"
+    return df
+
+
+def run(source, window_len=1.0, step=0.5, model_path=MODEL_PATH, alert_file=ALERT_FILE):
+    detector = Detector(model_path, window_len)
+    window = deque()
+    next_check = None
+    total = 0
+    with open(alert_file, "a") as out:
+        for frame in source:
+            window.append(frame)
+            now = frame["timestamp"]
+            while window and window[0]["timestamp"] < now - window_len:
+                window.popleft()
+            if next_check is None:
+                next_check = now + window_len
+            if now >= next_check:
+                for alert in detector.detect_window(to_frame_table(window), now):
+                    line = to_json_line(alert)
+                    print(line, flush=True)
+                    out.write(line + "\n")
+                    out.flush()
+                    total += 1
+                next_check = now + step
+    print(f"Stream ended; {total} alerts written to {alert_file}")
+
+
+def main():
+    p = argparse.ArgumentParser(description="CAN-Sentinel live detector")
+    p.add_argument("--socket", default=SOCKET_PATH)
+    p.add_argument("--replay", help="CSV to replay instead of the live socket")
+    p.add_argument("--realtime", action="store_true", help="replay at recorded speed")
+    p.add_argument("--model", default=MODEL_PATH)
+    p.add_argument("--alerts", default=ALERT_FILE)
+    a = p.parse_args()
+    source = frames_from_csv(a.replay, a.realtime) if a.replay else frames_from_socket(a.socket)
+    run(source, model_path=a.model, alert_file=a.alerts)
+
+
+if __name__ == "__main__":
+    main()
