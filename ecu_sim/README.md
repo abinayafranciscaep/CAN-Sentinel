@@ -144,6 +144,24 @@ Timing jitter: approximately +/-1 ms
 Press Ctrl+C to stop.
 ```
 
+### Live Telemetry and Execution Summary
+
+While transmitting, the simulator outputs an automated telemetry status line every 5 seconds, displaying runtime `[MM:SS]`, cumulative frame count, real-time transmission rate, vehicle speed, coupled engine RPM, steering angle, and brake pedal engagement:
+
+```text
+[TELEMETRY] [00:05] Frames:    1600 | Rate: 320.0 fps | Speed:  18 km/h | RPM: 1245 | Steer:  +4.5 deg | Brake: OFF
+[TELEMETRY] [00:10] Frames:    3201 | Rate: 320.1 fps | Speed:  32 km/h | RPM: 1590 | Steer:  +8.0 deg | Brake: OFF
+[TELEMETRY] [00:15] Frames:    4801 | Rate: 320.0 fps | Speed:  46 km/h | RPM: 1945 | Steer: +12.5 deg | Brake: ON (64%)
+[TELEMETRY] [00:20] Frames:    6401 | Rate: 320.0 fps | Speed:  35 km/h | RPM: 1680 | Steer:  +9.0 deg | Brake: ON (64%)
+```
+
+Upon stopping (`Ctrl+C` or SIGTERM), the simulator outputs a final execution summary confirming total frames, total elapsed time, and average throughput:
+
+```text
+CAN-Sentinel ECU Simulator stopped.
+Execution summary: 9602 frames transmitted in 30.00 seconds (average rate: 320.07 fps).
+```
+
 The simulator prints the active seed upon startup and transmits continuously until it receives `Ctrl+C` (SIGINT) or SIGTERM. If invalid arguments or values outside 32-bit unsigned bounds are passed, or if `vcan0` is missing, it prints a clear error and exits with a non-zero status instead of running silently:
 
 ```bash

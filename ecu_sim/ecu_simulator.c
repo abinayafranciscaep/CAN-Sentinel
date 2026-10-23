@@ -23,6 +23,7 @@
 #define SIGNAL_UPDATE_US 50000L
 #define BRAKE_HOLD_MIN_US 2000000L
 #define BRAKE_HOLD_MAX_US 6000000L
+#define TELEMETRY_INTERVAL_US 5000000L
 #define SCHEDULER_SLACK_PERIODS 5
 
 typedef struct {
@@ -234,6 +235,9 @@ int main(int argc, char *argv[])
     struct ifreq interface_request;
     struct sockaddr_can address;
     struct timespec now;
+    struct timespec start_time;
+    struct timespec next_telemetry;
+    unsigned long total_frames = 0;
     unsigned int seed;
     char *endptr = NULL;
     unsigned long parsed_seed;
@@ -304,7 +308,9 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    start_time = now;
     next_signal_update = add_us(now, SIGNAL_UPDATE_US);
+    next_telemetry = add_us(now, TELEMETRY_INTERVAL_US);
 
     next_brake_toggle = add_us(
         now,
@@ -347,12 +353,44 @@ int main(int argc, char *argv[])
             }
         }
 
+        if (timespec_diff_us(&now, &next_telemetry) >= 0) {
+            long elapsed_sec = now.tv_sec - start_time.tv_sec;
+            int minutes = (int)(elapsed_sec / 60);
+            int seconds = (int)(elapsed_sec % 60);
+            double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
+                             + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
+            double fps = (elapsed_s > 0.0) ? ((double)total_frames / elapsed_s) : 0.0;
+            char brake_info[16];
+
+            if (brake_switch) {
+                snprintf(brake_info, sizeof(brake_info), "ON (%d%%)", brake_pressure);
+            } else {
+                snprintf(brake_info, sizeof(brake_info), "OFF");
+            }
+
+            printf("[TELEMETRY] [%02d:%02d] Frames: %7lu | Rate: %5.1f fps | Speed: %3d km/h | RPM: %4d | Steer: %+5.1f deg | Brake: %s\n",
+                   minutes, seconds, total_frames, fps, vehicle_speed, engine_rpm,
+                   (double)steering_angle / 10.0, brake_info);
+            fflush(stdout);
+
+            next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
+
+            while (timespec_diff_us(&now, &next_telemetry) >= 0) {
+                next_telemetry = add_us(
+                    next_telemetry,
+                    TELEMETRY_INTERVAL_US
+                );
+            }
+        }
+
         for (int i = 0; i < ECU_COUNT && running; i++) {
             if (timespec_diff_us(&now, &ecus[i].next_send) >= 0) {
                 if (send_frame(socket_fd, &ecus[i]) < 0) {
                     running = 0;
                     break;
                 }
+
+                total_frames++;
 
                 if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
                     perror("Failed to read monotonic clock");
@@ -416,7 +454,13 @@ int main(int argc, char *argv[])
 
     close(socket_fd);
 
+    double total_duration_s = (double)(now.tv_sec - start_time.tv_sec)
+                            + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
+    double avg_fps = (total_duration_s > 0.0) ? ((double)total_frames / total_duration_s) : 0.0;
+
     printf("\nCAN-Sentinel ECU Simulator stopped.\n");
+    printf("Execution summary: %lu frames transmitted in %.2f seconds (average rate: %.2f fps).\n",
+           total_frames, total_duration_s, avg_fps);
 
     return EXIT_SUCCESS;
 }

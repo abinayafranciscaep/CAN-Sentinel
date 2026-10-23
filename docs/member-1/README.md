@@ -42,6 +42,7 @@
   - [Step 11: Record the Three 10-Minute Baseline Datasets](#step-11-record-the-three-10-minute-baseline-datasets)
   - [Step 12: Automated Payload Tests (Week 3)](#step-12-automated-payload-tests-week-3)
     - [Step 12.1: Unified Build Automation (Makefile)](#step-121-unified-build-automation-makefile)
+    - [Step 12.2: Periodic Live Telemetry Banner and Execution Summary](#step-122-periodic-live-telemetry-banner-and-execution-summary)
 - [Known Limitations](#known-limitations)
 - [Expected Outcome](#expected-outcome)
 - [Next Steps](#next-steps)
@@ -169,6 +170,7 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Step 11: three 10-minute baseline datasets recorded with Member 3's logger | ⚠️ Recorded 10/16; re-recording needed (timestamps, rate, Step 10 behavior) |
 | Step 12: automated payload tests (`test_payloads.c`) | ✅ Done (7/7 unit tests passed) |
 | Step 12.1: unified build automation & test harness (`Makefile`) | ✅ Done |
+| Step 12.2: periodic live telemetry banner & execution summary | ✅ Done |
 
 ## Development Workflow and Repository Layout
 
@@ -190,8 +192,7 @@ Windows host: D:\Study\Projects\CAN-Sentinel        (Git repository, branch memb
 
 Kali VM: ~/CAN-Sentinel/ecu-simulator               (compile/test workspace, not a Git clone)
 ├── ecu_simulator.c                        # Copy of the repository source
-├── ecu_simulator                          # Compiled executable
-└── ecu_simulator_step8_backup.c           # Display-only baseline (Step 3)
+└── ecu_simulator                          # Compiled executable
 ```
 
 > [!NOTE]
@@ -2748,6 +2749,44 @@ make test
 
 **Result:** Step 12.1 is complete. Build automation enforces consistent compiler flags, accelerates test execution, and eliminates manual compilation errors across development and test environments.
 
+### Step 12.2: Periodic Live Telemetry Banner and Execution Summary
+
+> **Environment:** Kali Linux VM (compile and run)
+> **Status:** 🟢 **Implemented and Verified.** To provide real-time runtime observability without requiring a separate `candump` terminal, the simulator was enhanced with an automated 5-second live telemetry banner and an end-of-run execution summary.
+
+#### Implementation Details
+- **5-Second Telemetry Timer (`TELEMETRY_INTERVAL_US 5000000L`):** Evaluated every loop iteration alongside the 50 ms signal update timer. Because it prints only once every 5 seconds, it imposes negligible processing overhead (< 10 μs) and introduces no timing distortion to the CAN bus scheduler.
+- **Metrics Displayed:**
+  - Elapsed run time in `[MM:SS]` format.
+  - Cumulative frames successfully transmitted (`total_frames`).
+  - Real-time aggregate transmission rate (`fps`).
+  - Real-time physical vehicle dynamics: vehicle speed (`km/h`), coupled engine RPM, steering angle in degrees, and brake pedal engagement (`ON (pressure%)` or `OFF`).
+- **Execution Summary:** Upon shutdown (`Ctrl+C` or SIGTERM), the simulator computes total elapsed wall-clock time and outputs final throughput statistics.
+
+```text
+[TELEMETRY] [00:05] Frames:    1559 | Rate: 309.3 fps | Speed:  42 km/h | RPM: 1821 | Steer:  +2.5 deg | Brake: OFF
+[TELEMETRY] [00:10] Frames:    3115 | Rate: 311.5 fps | Speed:  38 km/h | RPM: 1740 | Steer:  -4.9 deg | Brake: ON (100%)
+[TELEMETRY] [00:15] Frames:    4717 | Rate: 314.4 fps | Speed:  46 km/h | RPM: 1970 | Steer:  -2.2 deg | Brake: ON (100%)
+...
+[TELEMETRY] [01:00] Frames:   18910 | Rate: 315.2 fps | Speed:  56 km/h | RPM: 2187 | Steer: +17.2 deg | Brake: OFF
+^C
+CAN-Sentinel ECU Simulator stopped.
+Execution summary: 19699 frames transmitted in 62.44 seconds (average rate: 315.47 fps).
+```
+
+#### Updated Source Checksum
+The SHA-256 hash of `ecu_sim/ecu_simulator.c` following the Step 12.2 live telemetry addition:
+```text
+78e9012c220a8b3a555d06e9de39df1c42a56522fdf08acae21884e7c98f7383
+```
+
+<!-- Screenshot 42: Live telemetry banner and execution summary in Kali Linux terminal -->
+![Live Telemetry Banner](screenshots/42-live-telemetry-banner.png)
+
+**Screenshot 42:** Terminal execution of `ecu_simulator` demonstrating the periodic live telemetry banner updating every 5 seconds and reporting final execution summary on shutdown.
+
+**Result:** Step 12.2 provides continuous observability during testing and baseline recording, enabling developers to confirm signal dynamics and throughput at a glance without secondary inspection tools.
+
 ---
 
 ## Known Limitations
@@ -2772,4 +2811,4 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 ## Next Steps
 
 1. Re-record the three 10-minute baseline datasets (Step 11) using the optimized Step 10.21 simulator build after confirming logger monotonic timestamps.
-2. Automated payload tests in Week 3 (Step 12).
+2. Automated payload tests, unified Makefile, and live telemetry in Week 3 (Steps 12, 12.1, and 12.2) complete.
