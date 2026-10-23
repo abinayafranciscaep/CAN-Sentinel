@@ -1,0 +1,84 @@
+CAN-SENTINEL — NORMAL CAN TRAFFIC RECORDING RESULTS
+Date: 23 October 2026
+
+Purpose
+Three normal CAN traffic recordings were made using the recording script with a requested duration of 600 seconds per run. The results below are based on the terminal output provided.
+
+============================================================
+RUN 1
+============================================================
+File: data/normal_run1_1023.csv
+Requested duration: 600 seconds
+CAN frames saved: 187,442
+CSV lines including header: 187,443
+CSV validation: 187,442 rows checked; 0 problems
+Baseline result: PASS
+Reported rolling-counter breaks: 0 across all six CAN IDs
+
+Per-ID results:
+- 0x0A0: 29,538 frames; measured period 20.32 ms; expected 20 ms; counter breaks 0
+- 0x0B0: 58,204 frames; measured period 10.31 ms; expected 10 ms; counter breaks 0
+- 0x100: 58,190 frames; measured period 10.31 ms; expected 10 ms; counter breaks 0
+- 0x200: 29,548 frames; measured period 20.31 ms; expected 20 ms; counter breaks 0
+- 0x300: 5,981 frames; measured period 100.34 ms; expected 100 ms; counter breaks 0
+- 0x600: 5,981 frames; measured period 100.34 ms; expected 100 ms; counter breaks 0
+
+============================================================
+RUN 2
+============================================================
+File: data/normal_run2_1023.csv
+Requested duration: 600 seconds
+CAN frames saved: 183,635
+CSV lines including header: 183,636
+CSV validation: 183,635 rows checked; 0 problems
+Baseline result: PASS
+Reported rolling-counter breaks: 0 across all six CAN IDs
+
+Per-ID results:
+- 0x0A0: 29,160 frames; measured period 19.03 ms; expected 20 ms; counter breaks 0
+- 0x0B0: 56,692 frames; measured period 9.79 ms; expected 10 ms; counter breaks 0
+- 0x100: 56,713 frames; measured period 9.78 ms; expected 10 ms; counter breaks 0
+- 0x200: 29,147 frames; measured period 19.04 ms; expected 20 ms; counter breaks 0
+- 0x300: 5,961 frames; measured period 93.09 ms; expected 100 ms; counter breaks 0
+- 0x600: 5,962 frames; measured period 93.08 ms; expected 100 ms; counter breaks 0
+
+============================================================
+RUN 3
+============================================================
+File: data/normal_run3_1023.csv
+Requested duration: 600 seconds
+CAN frames saved: 183,322
+CSV lines including header: 183,323
+CSV validation: 183,322 rows checked; 0 problems
+Baseline result: PASS
+Reported rolling-counter breaks: 0 across all six CAN IDs
+
+Per-ID results:
+- 0x0A0: 29,125 frames; measured period 18.97 ms; expected 20 ms; counter breaks 0
+- 0x0B0: 56,601 frames; measured period 9.76 ms; expected 10 ms; counter breaks 0
+- 0x100: 56,577 frames; measured period 9.76 ms; expected 10 ms; counter breaks 0
+- 0x200: 29,112 frames; measured period 18.98 ms; expected 20 ms; counter breaks 0
+- 0x300: 5,953 frames; measured period 92.79 ms; expected 100 ms; counter breaks 0
+- 0x600: 5,954 frames; measured period 92.79 ms; expected 100 ms; counter breaks 0
+
+============================================================
+COMBINED SUMMARY
+============================================================
+Total CAN frames across all three runs: 554,399
+Total CSV data rows validated: 554,399
+Total CSV validation problems: 0
+Baseline results: PASS for all three runs
+Expected CAN IDs checked per run: 6 (0x0A0, 0x0B0, 0x100, 0x200, 0x300, 0x600)
+Reported rolling-counter breaks: 0 across all runs
+
+Interpretation and limitations
+- The terminal output reports CSV validation and configured baseline checks passing for each run.
+- These results do not, by themselves, verify brake-switch hold durations, the RPM-to-speed relationship, or the actual first-to-last timestamp span.
+- Each run was requested for 600 seconds, but the exact timestamp span was not calculated from the supplied Run 1–3 output here.
+- The expected scheduler rate of approximately 320 frames/second has not been independently confirmed by these CSV validation outputs.
+
+Pending verification
+1. Check actual first-to-last timestamp span for each CSV against the requested 600 seconds.
+2. Verify brake-switch hold durations are within the intended 2–6 second range.
+3. Verify engine RPM tracks vehicle speed with the intended bounded noise.
+4. Confirm the updated simulator binary was built and used for all three runs.
