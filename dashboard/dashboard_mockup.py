@@ -117,24 +117,47 @@ def ecu_name(can_id):
 # Loaders
 # ---------------------------------------------------------------------------
 
+
 def load_alert(path):
-    """Return the alert dict, or None if missing, malformed or incomplete."""
+    """Load the latest valid alert from either a JSON object or JSONL file."""
+    latest_alert = None
+
     try:
         with open(path, encoding="utf-8") as f:
-            alert = json.load(f)
-    except (OSError, json.JSONDecodeError):
+            content = f.read().strip()
+    except OSError:
         return None
 
-    if not isinstance(alert, dict) or not REQUIRED_ALERT_FIELDS <= alert.keys():
+    if not content:
         return None
 
+    # Accept a regular JSON object first, then fall back to JSON Lines.
     try:
-        alert["confidence"] = float(alert["confidence"])
-    except (TypeError, ValueError):
-        return None
+        parsed = json.loads(content)
+        candidates = parsed if isinstance(parsed, list) else [parsed]
+    except json.JSONDecodeError:
+        candidates = []
+        for line in content.splitlines():
+            if not line.strip():
+                continue
+            try:
+                candidates.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
 
-    return alert
+    for alert in candidates:
+        if not isinstance(alert, dict):
+            continue
+        if not REQUIRED_ALERT_FIELDS <= alert.keys():
+            continue
+        try:
+            alert = dict(alert)
+            alert["confidence"] = float(alert["confidence"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        latest_alert = alert
 
+    return latest_alert
 
 def find_recording(data_dir):
     """Newest data/normal_run*_*.csv, or None."""
@@ -149,16 +172,17 @@ def find_recording(data_dir):
     return files[0] if files else None
 
 
+
 def load_recording(path, n=5):
     """
-    One pass over a recorded CSV.
-    Returns (last_n_rows, frames_per_second, filename, clock_steps) or None.
-    Rows are (timestamp, can_id, dlc, data_hex, status).
+    Reads a recorded CSV in one pass.
 
-    Frames per second uses only forward-moving time. Our Oct 16 recordings
-    contain timestamps that step backwards (about 2.5 s every 30 s), so
-    (last - first) would understate the duration and overstate the rate.
-    clock_steps is the number of backward steps found in the file.
+    Returns:
+        (last_n_rows, frames_per_second, filename, clock_steps)
+        or None if the file is invalid.
+
+    FPS is calculated using forward-moving timestamp differences.
+    Backward timestamp jumps are counted in clock_steps.
     """
     if path is None:
         return None
@@ -172,21 +196,38 @@ def load_recording(path, n=5):
     try:
         with open(path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            if not reader.fieldnames or not REQUIRED_CSV_FIELDS <= set(reader.fieldnames):
+
+            if (
+                not reader.fieldnames
+                or not REQUIRED_CSV_FIELDS.issubset(set(reader.fieldnames))
+            ):
                 return None
+
             for r in reader:
                 ts = float(r["timestamp"])
+
                 if prev is not None:
-                    d = ts - prev
-                    if d >= 0:
-                        forward += d
+                    delta = ts - prev
+
+                    if delta >= 0:
+                        forward += delta
                     else:
                         clock_steps += 1
+
                 prev = ts
                 count += 1
+
                 status = "OK" if r["label"] == "normal" else "ALERT"
-                tail.append((r["timestamp"], r["can_id"], r["dlc"], r["data_hex"], status))
-    except (OSError, ValueError, KeyError):
+
+                tail.append((
+                    r["timestamp"],
+                    r["can_id"],
+                    r["dlc"],
+                    r["data_hex"],
+                    status
+                ))
+
+    except (OSError, ValueError, KeyError, TypeError):
         return None
 
     if count < 2 or forward <= 0:
@@ -198,7 +239,8 @@ def load_recording(path, n=5):
 
 # Load everything once at start-up.
 ALERT = load_alert(ALERT_FILE)
-RECORDING = load_recording(find_recording(DATA_DIR))
+RECORDING_FILE = DATA_DIR / "normal_run1_1016.csv"
+RECORDING = load_recording(RECORDING_FILE)
 
 if RECORDING:
     ROWS, _fps, RECORDING_NAME, CLOCK_STEPS = RECORDING
