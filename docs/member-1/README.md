@@ -43,6 +43,7 @@
   - [Step 12: Automated Payload Tests (Week 3)](#step-12-automated-payload-tests-week-3)
     - [Step 12.1: Unified Build Automation (Makefile)](#step-121-unified-build-automation-makefile)
     - [Step 12.2: Periodic Live Telemetry Banner and Execution Summary](#step-122-periodic-live-telemetry-banner-and-execution-summary)
+    - [Step 12.3: Industry-Standard CAN Database (can_sentinel.dbc)](#step-123-industry-standard-can-database-can_sentineldbc)
 - [Known Limitations](#known-limitations)
 - [Expected Outcome](#expected-outcome)
 - [Next Steps](#next-steps)
@@ -171,6 +172,7 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Step 12: automated payload tests (`test_payloads.c`) | ✅ Done (7/7 unit tests passed) |
 | Step 12.1: unified build automation & test harness (`Makefile`) | ✅ Done |
 | Step 12.2: periodic live telemetry banner & execution summary | ✅ Done |
+| Step 12.3: industry-standard CAN database (`can_sentinel.dbc`) | ✅ Done |
 
 ## Development Workflow and Repository Layout
 
@@ -2787,6 +2789,34 @@ The SHA-256 hash of `ecu_sim/ecu_simulator.c` following the Step 12.2 live telem
 
 **Result:** Step 12.2 provides continuous observability during testing and baseline recording, enabling developers to confirm signal dynamics and throughput at a glance without secondary inspection tools.
 
+### Step 12.3: Industry-Standard CAN Database (`can_sentinel.dbc`)
+
+> **Environment:** Windows repository (`ecu_sim/can_sentinel.dbc`)
+> **Status:** 🟢 **Implemented.** To elevate the project to production automotive OEM standards and eliminate ambiguous manual payload parsing, a formal Vector CAN Database (`.dbc`) file was authored for the CAN-Sentinel vehicle network.
+
+#### Database Message and Signal Mapping
+
+| CAN ID (Hex) | Message Name | Period | Signal Name | Bit Start / Len | Byte Order | Scale & Offset | Physical Range & Unit |
+| :---: | :--- | :---: | :--- | :---: | :---: | :---: | :---: |
+| `0x0A0` (160) | `Brake_Message` | 20 ms | `Brake_Pressure`<br>`Brake_Switch`<br>`Brake_Rolling_Counter` | `7 \| 8`<br>`15 \| 8`<br>`63 \| 8` | Big (Motorola)<br>Big (Motorola)<br>Big (Motorola) | `1.0, 0`<br>`1.0, 0`<br>`1.0, 0` | `0` to `100 %`<br>`0` (Released) or `1` (Pressed)<br>`0` to `255` |
+| `0x0B0` (176) | `Steering_Message` | 10 ms | `Steering_Angle`<br>`Steering_Rolling_Counter` | `7 \| 16`<br>`63 \| 8` | Big (Motorola, signed)<br>Big (Motorola) | `0.1, 0`<br>`1.0, 0` | `-45.0` to `+45.0 deg`<br>`0` to `255` |
+| `0x100` (256) | `Engine_Message` | 10 ms | `Engine_RPM`<br>`Engine_Rolling_Counter` | `7 \| 16`<br>`63 \| 8` | Big (Motorola)<br>Big (Motorola) | `1.0, 0`<br>`1.0, 0` | `800` to `4000 RPM`<br>`0` to `255` |
+| `0x200` (512) | `Speed_Message` | 20 ms | `Vehicle_Speed`<br>`Speed_Rolling_Counter` | `7 \| 8`<br>`63 \| 8` | Big (Motorola)<br>Big (Motorola) | `1.0, 0`<br>`1.0, 0` | `0` to `130 km/h`<br>`0` to `255` |
+| `0x300` (768) | `Temperature_Message` | 100 ms | `Engine_Temperature`<br>`Temp_Rolling_Counter` | `7 \| 8`<br>`63 \| 8` | Big (Motorola)<br>Big (Motorola) | `1.0, -40`<br>`1.0, 0` | `80` to `105 degC`<br>`0` to `255` |
+| `0x600` (1536) | `Infotainment_Message` | 100 ms | `Infotainment_Status`<br>`Info_Rolling_Counter` | `7 \| 8`<br>`63 \| 8` | Big (Motorola)<br>Big (Motorola) | `1.0, 0`<br>`1.0, 0` | `0` (Inactive) or `1` (Active)<br>`0` to `255` |
+
+#### Capabilities Enabled
+1. **Wireshark Live Packet Dissection:** Loading `can_sentinel.dbc` into Wireshark decodes raw hex frames into real-time graphical curves and human-readable parameters.
+2. **Automated Team Decoding (`cantools`):** Downstream modules (Member 3's feature extractor and Member 4's ML pipeline) can load the DBC directly via Python:
+   ```python
+   import cantools
+   db = cantools.database.load_file("ecu_sim/can_sentinel.dbc")
+   decoded = db.decode_message(0x0A0, bytes.fromhex("4701000000000066"))
+   # Yields: {'Brake_Pressure': 71, 'Brake_Switch': 'PRESSED', 'Brake_Rolling_Counter': 102}
+   ```
+
+**Result:** Step 12.3 establishes the formal network schema for the CAN-Sentinel project, adhering to Vector Informatik automotive industry standards.
+
 ---
 
 ## Known Limitations
@@ -2811,4 +2841,4 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 ## Next Steps
 
 1. Re-record the three 10-minute baseline datasets (Step 11) using the optimized Step 10.21 simulator build after confirming logger monotonic timestamps.
-2. Automated payload tests, unified Makefile, and live telemetry in Week 3 (Steps 12, 12.1, and 12.2) complete.
+2. Automated payload tests, unified Makefile, live telemetry, and DBC database in Week 3 (Steps 12, 12.1, 12.2, and 12.3) complete.

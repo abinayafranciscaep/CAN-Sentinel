@@ -345,6 +345,35 @@ gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_sim/test_payloads ecu_sim/test_
 ./ecu_sim/test_payloads    # Or ./test_payloads in ~/CAN-Sentinel/ecu-simulator
 ```
 
+## CAN Database (can_sentinel.dbc)
+
+The CAN network specification is formalized in [`can_sentinel.dbc`](can_sentinel.dbc) using the industry-standard Vector DBC database format. This enables automated decoding of live SocketCAN traffic in Wireshark, Vector CANoe, or Python (`cantools`).
+
+### Database Message and Signal Mapping
+
+| CAN ID (Hex) | Message Name | Cycle Time | Signal Name | Bit Start / Len | Endianness | Scale & Offset | Physical Range & Unit |
+| :---: | :--- | :---: | :--- | :---: | :---: | :---: | :---: |
+| `0x0A0` (160) | `Brake_Message` | 20 ms | `Brake_Pressure`<br>`Brake_Switch`<br>`Brake_Rolling_Counter` | `7 \| 8`<br>`15 \| 8`<br>`63 \| 8` | Big (Motorola)<br>Big (Motorola)<br>Big (Motorola) | `1.0, 0`<br>`1.0, 0`<br>`1.0, 0` | `0` to `100 %`<br>`0` (Released) or `1` (Pressed)<br>`0` to `255` |
+| `0x0B0` (176) | `Steering_Message` | 10 ms | `Steering_Angle`<br>`Steering_Rolling_Counter` | `7 \| 16`<br>`63 \| 8` | Big (Motorola, signed)<br>Big (Motorola) | `0.1, 0`<br>`1.0, 0` | `-45.0` to `+45.0 deg`<br>`0` to `255` |
+| `0x100` (256) | `Engine_Message` | 10 ms | `Engine_RPM`<br>`Engine_Rolling_Counter` | `7 \| 16`<br>`63 \| 8` | Big (Motorola)<br>Big (Motorola) | `1.0, 0`<br>`1.0, 0` | `800` to `4000 RPM`<br>`0` to `255` |
+| `0x200` (512) | `Speed_Message` | 20 ms | `Vehicle_Speed`<br>`Speed_Rolling_Counter` | `7 \| 8`<br>`63 \| 8` | Big (Motorola)<br>Big (Motorola) | `1.0, 0`<br>`1.0, 0` | `0` to `130 km/h`<br>`0` to `255` |
+| `0x300` (768) | `Temperature_Message` | 100 ms | `Engine_Temperature`<br>`Temp_Rolling_Counter` | `7 \| 8`<br>`63 \| 8` | Big (Motorola)<br>Big (Motorola) | `1.0, -40`<br>`1.0, 0` | `80` to `105 degC`<br>`0` to `255` |
+| `0x600` (1536) | `Infotainment_Message` | 100 ms | `Infotainment_Status`<br>`Info_Rolling_Counter` | `7 \| 8`<br>`63 \| 8` | Big (Motorola)<br>Big (Motorola) | `1.0, 0`<br>`1.0, 0` | `0` (Inactive) or `1` (Active)<br>`0` to `255` |
+
+### Decoding in Python (`cantools`)
+
+```python
+import cantools
+
+# Load the database
+db = cantools.database.load_file("ecu_sim/can_sentinel.dbc")
+
+# Decode a sample Brake frame: 0A0#4701000000000066
+decoded = db.decode_message(0x0A0, bytes.fromhex("4701000000000066"))
+print(decoded)
+# Output: {'Brake_Pressure': 71, 'Brake_Switch': 'PRESSED', 'Brake_Rolling_Counter': 102}
+```
+
 ## Known limitations
 
 - Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing or
