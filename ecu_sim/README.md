@@ -374,6 +374,44 @@ print(decoded)
 # Output: {'Brake_Pressure': 71, 'Brake_Switch': 'PRESSED', 'Brake_Rolling_Counter': 102}
 ```
 
+## Multi-Threaded Concurrency Architecture (`pthreads` & C11 Atomics)
+
+The simulator features a high-concurrency multi-threaded distributed architecture that models real-world automotive ECUs as independent POSIX threads (`pthread`).
+
+### Command-Line Execution Options
+
+```bash
+# 1. Default: single-threaded bounded scheduler
+./ecu_sim/ecu_simulator
+
+# 2. Multi-threaded mode: 6 autonomous ECU threads + 1 physics thread
+./ecu_sim/ecu_simulator --threads
+
+# 3. Multi-threaded mode with deterministic seed and 60-second auto-stop duration
+./ecu_sim/ecu_simulator --threads --duration 60 42
+```
+
+### Concurrency Design & Thread Allocation
+
+| Thread | Subsystem | Period / Rate | Scheduling Policy | Real-Time Priority | Functional Safety |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| `thread_brake` | Brake ECU (`0x0A0`) | 20 ms (50 Hz) | `SCHED_FIFO` | 80 | ASIL-D (Chassis Safety) |
+| `thread_steer` | Steering ECU (`0x0B0`) | 10 ms (100 Hz) | `SCHED_FIFO` | 80 | ASIL-D (Chassis Safety) |
+| `thread_engine` | Engine ECU (`0x100`) | 10 ms (100 Hz) | `SCHED_FIFO` | 50 | ASIL-B (Powertrain) |
+| `thread_speed` | Speed ECU (`0x200`) | 20 ms (50 Hz) | `SCHED_FIFO` | 50 | ASIL-B (Powertrain) |
+| `thread_temp` | Thermal ECU (`0x300`) | 100 ms (10 Hz) | `SCHED_OTHER` | 0 | QM (Monitoring) |
+| `thread_info` | Infotainment (`0x600`) | 100 ms (10 Hz) | `SCHED_OTHER` | 0 | QM (Comfort) |
+| `thread_physics` | Vehicle Dynamics Engine | 50 ms (20 Hz) | `SCHED_OTHER` | 0 | Physics Generator |
+| `main` | Supervisor & Telemetry | 5000 ms (0.2 Hz) | `SCHED_OTHER` | 0 | Watchdog & Telemetry |
+
+### Key Architectural Strengths
+
+1. **Independent Sockets per ECU:** Each ECU worker thread opens and binds its own dedicated SocketCAN socket (`socket(PF_CAN, SOCK_RAW, CAN_RAW)`), eliminating kernel-level socket transmit lock contention.
+2. **Lock-Free Concurrency (`<stdatomic.h>`):** Shared vehicle dynamics (speed, RPM, steering angle, brake state) are synchronized using C11 atomics with memory barrier semantics (`memory_order_acquire` / `memory_order_release`). No mutexes are used, eliminating lock contention and priority inversion.
+3. **Absolute Monotonic Sleep (`clock_nanosleep`):** Each ECU thread sleeps using `CLOCK_MONOTONIC` and `TIMER_ABSTIME`, completely preventing cumulative timer drift.
+4. **Graceful Multi-Thread Teardown:** Upon `SIGINT` (`Ctrl+C`), all threads are joined via `pthread_join()`, ensuring zero memory or file descriptor leaks on exit.
+
+
 ## Known limitations
 
 - Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing or

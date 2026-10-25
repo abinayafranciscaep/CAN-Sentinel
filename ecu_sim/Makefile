@@ -4,7 +4,8 @@
 # ============================================================================
 
 CC      := gcc
-CFLAGS  := -Wall -Wextra -Wpedantic -std=c11 -O2
+CFLAGS  := -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread
+LDLIBS  := -lpthread -lrt
 TARGETS := ecu_simulator test_payloads
 
 .PHONY: all clean test setup-vcan help
@@ -13,7 +14,7 @@ TARGETS := ecu_simulator test_payloads
 all: $(TARGETS)
 
 ecu_simulator: ecu_simulator.c
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 test_payloads: test_payloads.c
 	$(CC) $(CFLAGS) -o $@ $<
@@ -46,7 +47,7 @@ clean:
 # Display help menu
 help:
 	@echo "CAN-Sentinel Build System Targets:"
-	@echo "  make            - Build both ecu_simulator and test_payloads"
+	@echo "  make            - Build both ecu_simulator and test_payloads (with pthreads)"
 	@echo "  make test       - Build and run the automated unit test suite"
 	@echo "  make setup-vcan - Configure and activate the vcan0 interface"
 	@echo "  make clean      - Remove compiled executable binaries"
