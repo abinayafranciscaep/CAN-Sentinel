@@ -1,9 +1,9 @@
 """
-dashboard_mockup.py - styled, resizable CAN-Sentinel dashboard.
+dashboard_mockup.py - styled, resizable, interactive CAN-Sentinel dashboard.
 
 Data sources (all optional; the dashboard falls back to sample data):
-    dashboard/sample_alert.json   -> alert card, threat gauge, alert count
-    data/normal_run*_*.csv        -> traffic table and frames/second
+    dashboard/sample_alerts.jsonl -> alert card, threat gauge, alert count
+    data/normal_run*_*.csv        -> traffic table, graph and frames/second
                                      (newest file by modification time)
 
 Nothing is read from the live CAN bus. When files load, the banner says
@@ -14,24 +14,35 @@ Run from the repository root:
 
 Car image:
     dashboard/assets/can_sentinel_car.png
-"""
 
-from openpyxl.styles import styleable
+Interactions
+    Click a top card or the alert banner ... jump to CAN Traffic / Alerts
+    Click a bar in "Traffic share by CAN ID" ... filter CAN Traffic by that ID
+    Hover the graph ... per-second values; 30 s / 60 s / All range buttons
+    "Hide table" ... minimise the recent-traffic table, graph takes the space
+    CAN Traffic: search + status filter, pause refresh, row decoder, CSV export
+    Alerts: mark as reviewed, copy details
+    Shortcuts: Ctrl+1/2/3 tabs, Ctrl+F search, F5 refresh, Ctrl +/-/0 zoom
+"""
 import csv
+import datetime
 import html
 import json
 import sys
-from collections import deque
+from collections import Counter, deque
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
+    QFont,
     QImage,
     QKeySequence,
     QLinearGradient,
     QPainter,
+    QPainterPath,
+    QPen,
     QPixmap,
     QShortcut,
     QTransform,
@@ -39,20 +50,25 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QButtonGroup,
+    QComboBox,
+    QFileDialog,
     QFrame,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSlider,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
-    QHBoxLayout,
-    QScrollArea,
-    QPushButton,
-    QSlider,
-    QSizePolicy,
 )
 
 # ---------------------------------------------------------------------------
@@ -61,7 +77,7 @@ from PyQt6.QtWidgets import (
 
 DASHBOARD_DIR = Path(__file__).resolve().parent
 DATA_DIR = DASHBOARD_DIR.parent / "data"
-ALERT_FILE = DASHBOARD_DIR / "sample_alert.json"
+ALERT_FILE = DASHBOARD_DIR / "sample_alerts.jsonl"
 
 IMAGE_CANDIDATES = [
     DASHBOARD_DIR / "assets" / "can_sentinel_car.png",
@@ -93,8 +109,7 @@ REQUIRED_ALERT_FIELDS = {
     "severity", "affected_system", "detection_layer", "technique",
 }
 REQUIRED_CSV_FIELDS = {"timestamp", "can_id", "dlc", "data_hex", "label"}
-# CAN ID to system-name mapping from the project baseline.
-# CAN ID -> readable system name
+# CAN ID -> readable system name (project baseline)
 ECU_NAMES = {
     0x0A0: "brake",
     0x0B0: "steering",
@@ -112,6 +127,7 @@ def ecu_name(can_id):
         return ECU_NAMES.get(int(str(can_id).strip(), 16))
     except (ValueError, TypeError):
         return None
+
 
 # ---------------------------------------------------------------------------
 # Loaders
@@ -159,6 +175,7 @@ def load_alert(path):
 
     return latest_alert
 
+
 def find_recording(data_dir):
     """Newest data/normal_run*_*.csv, or None."""
     try:
@@ -170,7 +187,6 @@ def find_recording(data_dir):
     except OSError:
         return None
     return files[0] if files else None
-
 
 
 def load_recording(path, n=5):
@@ -237,9 +253,59 @@ def load_recording(path, n=5):
     return list(tail), fps, Path(path).name, clock_steps
 
 
+_SERIES_CACHE = {}
+
+
+def load_fps_series(path):
+    """Frames per second for every second of the recording: (series, average).
+
+    Uses the same forward-timestamp rule as load_recording, and is cached per
+    file version so the 1-second refresh timer stays cheap.
+    """
+    if path is None:
+        return [], 0.0
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return [], 0.0
+    key = (str(path), st.st_mtime, st.st_size)
+    if key in _SERIES_CACHE:
+        return _SERIES_CACHE[key]
+
+    buckets = Counter()
+    prev, elapsed, count = None, 0.0, 0
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            if (
+                not reader.fieldnames
+                or not REQUIRED_CSV_FIELDS.issubset(set(reader.fieldnames))
+            ):
+                return [], 0.0
+            for r in reader:
+                ts = float(r["timestamp"])
+                if prev is not None and ts - prev >= 0:
+                    elapsed += ts - prev
+                prev = ts
+                count += 1
+                buckets[int(elapsed)] += 1
+    except (OSError, ValueError, KeyError, TypeError):
+        return [], 0.0
+    if not buckets:
+        return [], 0.0
+
+    series = [buckets.get(k, 0) for k in range(max(buckets) + 1)]
+    if len(series) > 2:
+        series = series[:-1]  # the last second is usually partial
+    avg = (count - 1) / elapsed if elapsed > 0 and count > 1 else 0.0
+    _SERIES_CACHE.clear()
+    _SERIES_CACHE[key] = (series, avg)
+    return series, avg
+
+
 # Load everything once at start-up.
 ALERT = load_alert(ALERT_FILE)
-RECORDING_FILE = DATA_DIR / "normal_run1_1016.csv"
+RECORDING_FILE = find_recording(DATA_DIR)
 RECORDING = load_recording(RECORDING_FILE)
 
 if RECORDING:
@@ -265,7 +331,7 @@ IS_SAMPLE_ALERT = bool(ALERT) and ALERT_FILE.name.lower().startswith("sample")
 SAMPLE_TAG = " (sample)" if IS_SAMPLE_ALERT else ""
 
 # ---------------------------------------------------------------------------
-# Style
+# Style (colours unchanged; a few rules appended at the end for new widgets)
 # ---------------------------------------------------------------------------
 
 STYLE = """
@@ -383,6 +449,41 @@ QPushButton:hover {
     background-color: #214263;
 }
 
+QTabWidget::pane {
+    border: 1px solid #203B59;
+    background-color: #07111F;
+}
+QTabBar::tab {
+    background-color: #101F33;
+    color: #A9BED7;
+    padding: 10px 18px;
+    border: 1px solid #203B59;
+}
+QTabBar::tab:hover {
+    background-color: #172D46;
+    color: #FFFFFF;
+}
+QTabBar::tab:selected {
+    background-color: #1A304A;
+    color: #FFFFFF;
+    border-bottom: 3px solid #20B8FF;
+}
+QLineEdit:focus {
+    border: 1px solid #20B8FF;
+}
+QPushButton:pressed {
+    background-color: #0D2238;
+}
+QTableWidget::item {
+    padding: 4px;
+}
+QLineEdit {
+    background-color: #0B1727;
+    color: #DCE8F7;
+    border: 1px solid #294967;
+    border-radius: 6px;
+    padding: 9px;
+}
 QSlider::groove:horizontal {
     background: #20344C;
     height: 5px;
@@ -399,6 +500,56 @@ QSlider::handle:horizontal {
 QScrollArea {
     background-color: #07111F;
     border: none;
+}
+
+QPushButton:checked {
+    background-color: #1A304A;
+    border: 1px solid #20B8FF;
+    color: #FFFFFF;
+}
+QFrame#card[clickable="true"]:hover {
+    border: 1px solid #20B8FF;
+    background-color: #132640;
+}
+QComboBox {
+    background-color: #0B1727;
+    color: #DCE8F7;
+    border: 1px solid #294967;
+    border-radius: 6px;
+    padding: 8px 10px;
+    min-width: 110px;
+}
+QComboBox:focus {
+    border: 1px solid #20B8FF;
+}
+QComboBox QAbstractItemView {
+    background-color: #0B1727;
+    color: #DCE8F7;
+    selection-background-color: #1B4265;
+    border: 1px solid #294967;
+}
+QToolTip {
+    background-color: #101F33;
+    color: #DCE8F7;
+    border: 1px solid #20B8FF;
+}
+QPushButton#navTab {
+    background-color: transparent;
+    color: #A9BED7;
+    border: none;
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+    padding: 10px 18px;
+    font-size: 14px;
+}
+QPushButton#navTab:hover {
+    background-color: #172D46;
+    color: #FFFFFF;
+}
+QPushButton#navTab:checked {
+    background-color: #1A304A;
+    color: #FFFFFF;
+    border-bottom: 3px solid #20B8FF;
 }
 """
 
@@ -425,10 +576,25 @@ def severity_color(severity):
     }.get(str(severity).lower(), "#FF5A66")
 
 
-def make_card(title, value, color, size=30):
-    """Create a rounded metric card with a title and a large value."""
+class ClickableFrame(QFrame):
+    """A QFrame that emits clicked() on a left click."""
 
-    card = QFrame()
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+def make_card(title, value, color, size=30, tip=None):
+    """Create a rounded metric card with a title and a large value.
+
+    The value label is kept on card.value_label so it can be updated later.
+    Pass tip to make the card clickable (hover highlight + tooltip).
+    """
+
+    card = ClickableFrame()
     card.setObjectName("card")
     card.setSizePolicy(
         QSizePolicy.Policy.Expanding,
@@ -475,7 +641,123 @@ def make_card(title, value, color, size=30):
     box.addWidget(symbol)
     box.addLayout(text_box, 1)
 
+    card.value_label = value_label
+    if tip:
+        card.setProperty("clickable", True)
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setToolTip(tip)
+
     return card
+
+
+class FpsChart(QWidget):
+    """Frames-per-second line chart with a hover read-out."""
+
+    LEFT, RIGHT, TOP, BOTTOM = 40, 10, 8, 20
+
+    def __init__(self):
+        super().__init__()
+        self.full = []
+        self.series = []
+        self.window = 60  # seconds shown; 0 = whole recording
+        self.avg = None
+        self.hover = None
+        self.setMinimumHeight(150)
+        self.setMouseTracking(True)
+
+    def set_series(self, series, avg=None):
+        self.full, self.avg = list(series), avg
+        self._apply()
+
+    def set_window(self, seconds):
+        self.window = seconds
+        self.hover = None
+        self._apply()
+
+    def _apply(self):
+        self.series = self.full[-self.window:] if self.window else self.full
+        if self.hover is not None and self.hover >= len(self.series):
+            self.hover = None
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        n = len(self.series)
+        pw = self.width() - self.LEFT - self.RIGHT
+        if n >= 2 and pw > 0:
+            i = round((event.position().x() - self.LEFT) / pw * (n - 1))
+            self.hover = max(0, min(n - 1, i))
+            self.update()
+
+    def leaveEvent(self, event):
+        self.hover = None
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        pw, ph = w - self.LEFT - self.RIGHT, h - self.TOP - self.BOTTOM
+        p.setFont(QFont(self.font().family(), 8))
+        n = len(self.series)
+        if n < 2 or pw <= 0 or ph <= 0:
+            p.setPen(QColor("#6F89A7"))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No recorded CSV to chart")
+            return
+        hi = (max(self.series) * 1.15) or 1
+
+        def xy(i, v):
+            return (self.LEFT + pw * i / (n - 1), self.TOP + ph * (1 - v / hi))
+
+        for g in range(5):
+            y = self.TOP + ph * g / 4
+            p.setPen(QPen(QColor("#203B59"), 1))
+            p.drawLine(self.LEFT, int(y), self.LEFT + pw, int(y))
+            p.setPen(QColor("#6F89A7"))
+            p.drawText(
+                0, int(y) - 7, self.LEFT - 6, 14,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                f"{hi * (4 - g) / 4:.0f}",
+            )
+
+        line = QPainterPath()
+        for i, v in enumerate(self.series):
+            x, y = xy(i, v)
+            line.moveTo(x, y) if i == 0 else line.lineTo(x, y)
+        area = QPainterPath(line)
+        area.lineTo(self.LEFT + pw, self.TOP + ph)
+        area.lineTo(self.LEFT, self.TOP + ph)
+        area.closeSubpath()
+        grad = QLinearGradient(0, self.TOP, 0, self.TOP + ph)
+        grad.setColorAt(0, QColor(32, 184, 255, 90))
+        grad.setColorAt(1, QColor(32, 184, 255, 0))
+        p.fillPath(area, QBrush(grad))
+        p.setPen(QPen(QColor("#20B8FF"), 2))
+        p.drawPath(line)
+
+        if self.avg:
+            y = self.TOP + ph * (1 - self.avg / hi)
+            p.setPen(QPen(QColor("#FFB547"), 1, Qt.PenStyle.DashLine))
+            p.drawLine(self.LEFT, int(y), self.LEFT + pw, int(y))
+
+        p.setPen(QColor("#6F89A7"))
+        p.drawText(self.LEFT, h - 16, pw, 14, Qt.AlignmentFlag.AlignLeft, f"{n} s ago")
+        p.drawText(self.LEFT, h - 16, pw, 14, Qt.AlignmentFlag.AlignRight, "latest")
+
+        if self.hover is not None:
+            x, y = xy(self.hover, self.series[self.hover])
+            p.setPen(QPen(QColor("#9FB4CE"), 1, Qt.PenStyle.DotLine))
+            p.drawLine(int(x), self.TOP, int(x), self.TOP + ph)
+            p.setBrush(QColor("#20B8FF"))
+            p.setPen(QPen(QColor("#FFFFFF"), 1))
+            p.drawEllipse(int(x) - 4, int(y) - 4, 8, 8)
+            text = f"{self.series[self.hover]} fps  ({n - 1 - self.hover} s ago)"
+            tw = p.fontMetrics().horizontalAdvance(text) + 14
+            bx = min(max(int(x) - tw // 2, self.LEFT), self.LEFT + pw - tw)
+            p.setPen(QPen(QColor("#20B8FF"), 1))
+            p.setBrush(QColor("#101F33"))
+            p.drawRoundedRect(bx, self.TOP + 2, tw, 20, 5, 5)
+            p.setPen(QColor("#DCE8F7"))
+            p.drawText(bx, self.TOP + 2, tw, 20, Qt.AlignmentFlag.AlignCenter, text)
 
 
 class HeroPanel(QWidget):
@@ -575,9 +857,134 @@ class HeroPanel(QWidget):
 
 
 class Dashboard(QMainWindow):
+    TAB_OVERVIEW, TAB_TRAFFIC, TAB_ALERTS = 0, 1, 2
+
+    # ------------------------------------------------------------------ data
+
+    def refresh_live_data(self, force=False):
+        """Refresh the latest recorded CSV; never implies live CAN detection.
+
+        The 1-second timer skips work while "Pause refresh" is on; the
+        Refresh button and F5 pass force=True.
+        """
+        if self.paused and not force:
+            return
+        try:
+            path = find_recording(DATA_DIR)
+            recording = load_recording(path, n=100)
+            if recording:
+                rows, fps, filename, clock_steps = recording
+                self.current_recording_name = filename
+                self.current_fps = f"{fps:.0f}"
+                self.current_clock_steps = clock_steps
+                self.fps_card.value_label.setText(self.current_fps)
+                self.source_status.setText(
+                    f"Recorded file: {filename} | {len(rows)} recent rows | NOT LIVE"
+                )
+                # Only rebuild tables/bars when the data changed, so a
+                # selected row or hovered bar is not reset every second.
+                if rows != self._last_rows or force:
+                    self._last_rows = list(rows)
+                    self.current_rows = rows
+                    self._populate_table(self.overview_table, rows[-5:])
+                    self._populate_table(self.traffic_table, rows)
+                    self.filter_traffic_table()
+                    self._update_analysis(rows)
+                series, avg = load_fps_series(path)
+                self.fps_chart.set_series(series, avg)
+                if series:
+                    self.chart_stats.setText(
+                        f"average {avg:.0f} fps  |  peak {max(series)} fps  |  "
+                        "hover the graph for per-second values"
+                    )
+            else:
+                self.source_status.setText(
+                    "No valid data/normal_run*_*.csv recording found. Showing startup/sample rows."
+                )
+            self.last_refresh.setText(
+                "UI refresh: " + datetime.datetime.now().strftime("%H:%M:%S")
+                + ("  (auto-refresh paused)" if self.paused else "")
+            )
+        except Exception as e:
+            print(f"Dashboard refresh error: {e}")
+            if hasattr(self, "source_status"):
+                self.source_status.setText(f"Refresh error: {e}")
+
+    def _update_analysis(self, rows):
+        """Render descriptive statistics from recorded CSV rows; no detection inference."""
+        if not hasattr(self, "analysis_bars"):
+            return
+        while self.analysis_bars.count():
+            item = self.analysis_bars.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        total = len(rows)
+        counts = {}
+        for row in rows:
+            counts[str(row[1])] = counts.get(str(row[1]), 0) + 1
+        alert_rows = sum(1 for row in rows if str(row[4]).upper() == "ALERT")
+        self.analysis_frames_card.value_label.setText(str(total))
+        self.analysis_ids_card.value_label.setText(str(len(counts)))
+        self.analysis_alerts_card.value_label.setText(str(alert_rows))
+        top = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:8]
+        if not top:
+            empty = QLabel("No recorded rows available for analysis.")
+            empty.setObjectName("muted")
+            self.analysis_bars.addWidget(empty)
+            return
+        for can_id, count in top:
+            row_widget = ClickableFrame()
+            row_widget.setCursor(Qt.CursorShape.PointingHandCursor)
+            row_widget.setToolTip(f"Click to filter CAN Traffic by {can_id}")
+            row_widget.setStyleSheet(
+                "ClickableFrame:hover { background-color: #122238; border-radius: 6px; }"
+            )
+            row_widget.clicked.connect(lambda cid=can_id: self.filter_by_id(cid))
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(4, 2, 4, 2)
+            row_layout.setSpacing(10)
+            label = QLabel(f"{can_id}  ·  {ecu_name(can_id) or 'unknown ECU'}")
+            label.setMinimumWidth(180)
+            label.setStyleSheet("color: #DCE8F7;")
+            bar = QProgressBar()
+            bar.setRange(0, max(total, 1))
+            bar.setValue(count)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(12)
+            bar.setStyleSheet("QProgressBar { background:#172D46; border:0; border-radius:6px; } QProgressBar::chunk { background:#20B8FF; border-radius:6px; }")
+            value = QLabel(f"{count}  ({count / max(total, 1) * 100:.1f}%)")
+            value.setMinimumWidth(95)
+            value.setStyleSheet("color: #8EA6C2;")
+            row_layout.addWidget(label)
+            row_layout.addWidget(bar, 1)
+            row_layout.addWidget(value)
+            self.analysis_bars.addWidget(row_widget)
+
+    def _populate_table(self, table, rows):
+        table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            system = ecu_name(row[1])
+            shown = (row[0], row[1], system or "not in baseline", row[2], row[3], row[4])
+            for c, value in enumerate(shown):
+                item = QTableWidgetItem(str(value))
+                if c == 2 and system is None:
+                    item.setForeground(QColor("#FFB547"))
+                if c == 5:
+                    if value == "ALERT":
+                        item.setForeground(QColor("#FF5A66"))
+                        item.setText("●  ALERT")
+                    else:
+                        item.setForeground(QColor("#35E58B"))
+                        item.setText("●  OK")
+                table.setItem(r, c, item)
+
+    # ---------------------------------------------------------------- build
+
     def __init__(self):
         super().__init__()
-
+        self.paused = False
+        self._last_rows = None
         self.setWindowTitle("CAN-Sentinel Dashboard (mock-up)")
         self.resize(1440, 900)
         self.setMinimumSize(760, 560)
@@ -623,19 +1030,6 @@ class Dashboard(QMainWindow):
         hero_layout.setContentsMargins(0, 8, 0, 8)
         hero_layout.setSpacing(12)
 
-        title_row = QHBoxLayout()
-        title_row.setSpacing(0)
-
-        heading = QLabel("CAN-")
-        heading.setObjectName("heading")
-
-        heading_accent = QLabel("Sentinel")
-        heading_accent.setObjectName("headingAccent")
-
-        title_row.addWidget(heading)
-        title_row.addWidget(heading_accent)
-        title_row.addStretch(1)
-
         subtitle = QLabel("Automotive ECU intrusion detection")
         subtitle.setObjectName("sub")
 
@@ -660,30 +1054,38 @@ class Dashboard(QMainWindow):
         demo_label.setObjectName("muted")
         demo_label.setWordWrap(True)
 
-        hero_layout.addLayout(title_row)
         hero_layout.addWidget(subtitle)
         hero_layout.addWidget(demo_label)
-        hero_layout.addStretch(1)
 
-        # ---------------- Three summary cards ----------------
+        # ---------------- Three summary cards (click to jump) ----------------
 
         name, color = threat_level(THREAT)
 
         cards = QHBoxLayout()
         cards.setSpacing(12)
 
-        cards.addWidget(
-            make_card("Frames / second", FRAMES_PER_SECOND, "#39C5FF")
+        self.fps_card = make_card(
+            "Frames / second", FRAMES_PER_SECOND, "#39C5FF",
+            tip="Open CAN Traffic",
         )
-        cards.addWidget(
-            make_card("Alerts loaded" + SAMPLE_TAG, ALERT_COUNT, "#FFB547")
+        self.alerts_card = make_card(
+            "Alerts loaded" + SAMPLE_TAG, ALERT_COUNT, "#FFB547",
+            tip="Open Alerts",
         )
-        cards.addWidget(
-            make_card("Threat level" + SAMPLE_TAG, name, color)
+        self.threat_card = make_card(
+            "Threat level" + SAMPLE_TAG, name, color,
+            tip="Open Alerts",
         )
+        self.fps_card.clicked.connect(lambda: self.go_to(self.TAB_TRAFFIC))
+        self.alerts_card.clicked.connect(lambda: self.go_to(self.TAB_ALERTS))
+        self.threat_card.clicked.connect(lambda: self.go_to(self.TAB_ALERTS))
+        cards.addWidget(self.fps_card)
+        cards.addWidget(self.alerts_card)
+        cards.addWidget(self.threat_card)
 
         hero_layout.addLayout(cards)
-
+        hero.setMinimumHeight(250)     # was 340
+        hero.setMaximumHeight(270)     # was 400
         # ---------------- Threat score gauge ----------------
 
         threat_row = QHBoxLayout()
@@ -701,6 +1103,7 @@ class Dashboard(QMainWindow):
         gauge.setRange(0, 100)
         gauge.setValue(THREAT)
         gauge.setTextVisible(False)
+        gauge.setToolTip(f"Threat score {THREAT} / 100")
         gauge.setStyleSheet(
             f"QProgressBar::chunk {{ background-color: {color}; }}"
         )
@@ -719,9 +1122,12 @@ class Dashboard(QMainWindow):
 
         page.addWidget(hero, 1)
 
-        # ---------------- Latest alert banner ----------------
+        # ---------------- Latest alert banner (click to open Alerts) ----------------
 
-        alert_card = QFrame()
+        alert_card = ClickableFrame()
+        alert_card.setCursor(Qt.CursorShape.PointingHandCursor)
+        alert_card.setToolTip("Open Alerts")
+        alert_card.clicked.connect(lambda: self.go_to(self.TAB_ALERTS))
         alert_layout = QHBoxLayout(alert_card)
         alert_layout.setContentsMargins(16, 10, 16, 10)
         alert_layout.setSpacing(12)
@@ -732,11 +1138,11 @@ class Dashboard(QMainWindow):
 
         alert_text = QVBoxLayout()
 
-        alert_title = QLabel(
+        self.alert_title = QLabel(
             "Latest alert  —  SAMPLE ALERT, not a detection"
             if IS_SAMPLE_ALERT else "Latest alert"
         )
-        alert_title.setStyleSheet("color: #B7C8DB; font-size: 12px;")
+        self.alert_title.setStyleSheet("color: #B7C8DB; font-size: 12px;")
 
         alert_detail = QLabel()
         alert_detail.setTextFormat(Qt.TextFormat.RichText)
@@ -783,7 +1189,7 @@ class Dashboard(QMainWindow):
                 '<span style="color:#35E58B;font-weight:bold;">No alerts</span>'
             )
 
-        alert_text.addWidget(alert_title)
+        alert_text.addWidget(self.alert_title)
         alert_text.addWidget(alert_detail)
 
         alert_layout.addWidget(alert_icon)
@@ -791,7 +1197,7 @@ class Dashboard(QMainWindow):
 
         page.addWidget(alert_card)
 
-        # ---------------- Recent CAN traffic table ----------------
+        # ---------------- Recent CAN traffic: graph + minimised table ----------------
 
         traffic_card = QFrame()
         traffic_card.setObjectName("trafficCard")
@@ -829,14 +1235,49 @@ class Dashboard(QMainWindow):
             "font-weight: bold;"
         )
 
+        self.table_toggle = QPushButton("Hide table")
+        self.table_toggle.setToolTip("Minimise the table so the graph gets the full width")
+        self.table_toggle.clicked.connect(self.toggle_overview_table)
+
         traffic_heading.addWidget(traffic_icon)
         traffic_heading.addWidget(traffic_title)
         traffic_heading.addStretch(1)
         traffic_heading.addWidget(sample_badge)
+        traffic_heading.addWidget(self.table_toggle)
 
         traffic_layout.addLayout(traffic_heading)
 
+        traffic_body = QHBoxLayout()
+        traffic_body.setSpacing(12)
+
+        # Left: frames-per-second graph with range buttons.
+        chart_box = QVBoxLayout()
+        chart_box.setSpacing(6)
+        chart_top = QHBoxLayout()
+        chart_title = QLabel("FRAMES PER SECOND")
+        chart_title.setStyleSheet("color: #A9BED7; font-size: 12px; font-weight: bold;")
+        chart_top.addWidget(chart_title)
+        chart_top.addStretch(1)
+        self.range_group = QButtonGroup(self)
+        self.fps_chart = FpsChart()
+        for text, seconds, checked in (("30 s", 30, False), ("60 s", 60, True), ("All", 0, False)):
+            b = QPushButton(text)
+            b.setCheckable(True)
+            b.setChecked(checked)
+            b.setFixedWidth(52)
+            self.range_group.addButton(b)
+            b.clicked.connect(lambda _c, s=seconds: self.fps_chart.set_window(s))
+            chart_top.addWidget(b)
+        self.chart_stats = QLabel("No recorded CSV to chart.")
+        self.chart_stats.setObjectName("muted")
+        chart_box.addLayout(chart_top)
+        chart_box.addWidget(self.fps_chart, 1)
+        chart_box.addWidget(self.chart_stats)
+        traffic_body.addLayout(chart_box, 5)
+
+        # Right: compact table (last 5 rows).
         table = QTableWidget(len(ROWS), 6)
+        self.overview_table = table
         table.setHorizontalHeaderLabels(
             ["timestamp", "can_id", "system", "dlc", "data_hex", "status"]
         )
@@ -846,7 +1287,7 @@ class Dashboard(QMainWindow):
         )
 
         table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(30)
+        table.verticalHeader().setDefaultSectionSize(26)
 
         table.setAlternatingRowColors(True)
         table.setEditTriggers(
@@ -856,6 +1297,7 @@ class Dashboard(QMainWindow):
             QAbstractItemView.SelectionBehavior.SelectRows
         )
         table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        table.setStyleSheet("QTableWidget { font-size: 11px; } QHeaderView::section { padding: 5px 4px; }")
 
         for r, row in enumerate(ROWS):
             system = ecu_name(row[1])
@@ -888,10 +1330,11 @@ class Dashboard(QMainWindow):
 
                 table.setItem(r, c, item)
 
-        table.setMinimumHeight(155)
-        table.setMaximumHeight(195)
+        table.setMinimumHeight(150)
+        table.setMaximumHeight(175)
+        traffic_body.addWidget(table, 6, Qt.AlignmentFlag.AlignTop)
 
-        traffic_layout.addWidget(table)
+        traffic_layout.addLayout(traffic_body)
         page.addWidget(traffic_card)
 
         footer = QLabel(
@@ -904,7 +1347,235 @@ class Dashboard(QMainWindow):
         page.addWidget(footer)
 
         scroll.setWidget(content)
-        outer_layout.addWidget(scroll, 1)
+
+        # ---------------- Interactive tabs ----------------
+        self.current_rows = list(ROWS)
+        self.current_recording_name = RECORDING_NAME
+        self.current_fps = FRAMES_PER_SECOND
+        self.current_clock_steps = CLOCK_STEPS
+
+        tabs = QTabWidget()
+        self.tabs = tabs
+        tabs.setDocumentMode(True)
+        tabs.addTab(scroll, "Overview")
+
+        # ----- CAN Traffic tab -----
+        traffic_page = QWidget()
+        traffic_layout2 = QVBoxLayout(traffic_page)
+        traffic_layout2.setContentsMargins(18, 16, 18, 16)
+        traffic_layout2.setSpacing(10)
+        traffic_title2 = QLabel("CAN Traffic Explorer")
+        traffic_title2.setStyleSheet("font-size: 20px; font-weight: bold; color: #FFFFFF;")
+        traffic_hint = QLabel("Recorded CSV rows only — this view does not connect to a live CAN bus.")
+        traffic_hint.setObjectName("muted")
+
+        self.traffic_search = QLineEdit()
+        self.traffic_search.setPlaceholderText("Filter by CAN ID, ECU/system, status, or data hex…")
+        self.traffic_search.setClearButtonEnabled(True)
+        self.traffic_search.textChanged.connect(self.filter_traffic_table)
+
+        self.status_filter = QComboBox()
+        self.status_filter.addItems(["All status", "OK only", "ALERT only"])
+        self.status_filter.currentIndexChanged.connect(self.filter_traffic_table)
+
+        self.pause_button = QPushButton("⏸  Pause refresh")
+        self.pause_button.setCheckable(True)
+        self.pause_button.setToolTip("Freeze the tables so you can inspect rows")
+        self.pause_button.toggled.connect(self.set_paused)
+
+        export_button = QPushButton("Export shown rows (CSV)")
+        export_button.clicked.connect(self.export_traffic_csv)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(8)
+        controls.addWidget(self.traffic_search, 1)
+        controls.addWidget(self.status_filter)
+        controls.addWidget(self.pause_button)
+        controls.addWidget(export_button)
+
+        self.traffic_table = QTableWidget(0, 6)
+        self.traffic_table.setHorizontalHeaderLabels(["timestamp", "can_id", "system", "dlc", "data_hex", "status"])
+        self.traffic_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.traffic_table.verticalHeader().setVisible(False)
+        self.traffic_table.setAlternatingRowColors(True)
+        self.traffic_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.traffic_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.traffic_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.traffic_table.itemSelectionChanged.connect(self.show_row_detail)
+        self._populate_table(self.traffic_table, self.current_rows)
+
+        self.row_detail = QLabel("Select a row to decode it.")
+        self.row_detail.setTextFormat(Qt.TextFormat.RichText)
+        self.row_detail.setWordWrap(True)
+        self.row_detail.setStyleSheet(
+            "background-color: #101F33; border: 1px solid #294967;"
+            " border-left: 4px solid #20B8FF; border-radius: 8px; padding: 10px;"
+        )
+        self.traffic_count = QLabel("")
+        self.traffic_count.setObjectName("muted")
+
+        traffic_layout2.addWidget(traffic_title2)
+        traffic_layout2.addWidget(traffic_hint)
+        traffic_layout2.addLayout(controls)
+        traffic_layout2.addWidget(self.traffic_table, 1)
+        traffic_layout2.addWidget(self.traffic_count)
+        traffic_layout2.addWidget(self.row_detail)
+        tabs.addTab(traffic_page, "CAN Traffic")
+
+        # ----- Alerts tab -----
+        alerts_page = QWidget()
+        alerts_layout = QVBoxLayout(alerts_page)
+        alerts_layout.setContentsMargins(18, 16, 18, 16)
+        alerts_layout.setSpacing(14)
+        alerts_title = QLabel("Alert Review")
+        alerts_title.setStyleSheet("font-size: 20px; font-weight: bold; color: #FFFFFF;")
+        if ALERT:
+            alert_kind = "SAMPLE ALERT — not a real detector finding" if IS_SAMPLE_ALERT else "Alert loaded from configured alert file"
+            alert_summary = (
+                f"{alert_kind}\n\n"
+                f"Type: {ALERT.get('attack_type', 'Unknown')}\n"
+                f"CAN ID: {ALERT.get('suspect_id', 'Unknown')}\n"
+                f"Severity: {ALERT.get('severity', 'Unknown')}\n"
+                f"Confidence: {ALERT.get('confidence', 0):.2f}\n"
+                f"Affected system: {ALERT.get('affected_system', 'Unknown')}\n"
+                f"Detection layer: {ALERT.get('detection_layer', 'Unknown')}\n"
+                f"Technique: {ALERT.get('technique', 'Unknown')}"
+            )
+        else:
+            alert_summary = "No alert file loaded. No detector findings are available in this dashboard yet."
+        self.alert_summary = alert_summary
+        self.alert_reviewed = False
+        self.alert_details = QLabel(alert_summary)
+        self.alert_details.setWordWrap(True)
+        self.alert_details.setMinimumHeight(220)
+        self.alert_details.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._style_alert_details("#FFB547")
+
+        self.review_button = QPushButton("Mark as reviewed")
+        self.review_button.setCheckable(True)
+        self.review_button.setEnabled(bool(ALERT))
+        self.review_button.toggled.connect(self.set_alert_reviewed)
+        copy_button = QPushButton("Copy details")
+        copy_button.setEnabled(bool(ALERT))
+        copy_button.clicked.connect(
+            lambda: QApplication.clipboard().setText(self.alert_summary)
+        )
+        show_id_button = QPushButton("Show this ID in CAN Traffic")
+        show_id_button.setEnabled(bool(ALERT))
+        show_id_button.clicked.connect(
+            lambda: self.filter_by_id(str(ALERT["suspect_id"]))
+        )
+        alert_buttons = QHBoxLayout()
+        alert_buttons.setSpacing(8)
+        alert_buttons.addWidget(self.review_button)
+        alert_buttons.addWidget(copy_button)
+        alert_buttons.addWidget(show_id_button)
+        alert_buttons.addStretch(1)
+
+        alerts_layout.addWidget(alerts_title)
+        alerts_layout.addWidget(self.alert_details)
+        alerts_layout.addLayout(alert_buttons)
+        alerts_layout.addStretch(1)
+        tabs.addTab(alerts_page, "Alerts")
+
+        # ---------------- System health (collapsible, on Overview) ----------------
+        # Kept inline on the Overview: no separate Analysis/System Status tabs.
+
+        status_card = QFrame()
+        status_card.setObjectName("trafficCard")
+        status_card_layout = QVBoxLayout(status_card)
+        status_card_layout.setContentsMargins(16, 14, 16, 14)
+        status_card_layout.setSpacing(10)
+
+        status_head = QHBoxLayout()
+        status_heading = QLabel("SYSTEM HEALTH")
+        status_heading.setStyleSheet("color: #A9BED7; font-size: 13px; font-weight: bold;")
+        self.health_toggle = QPushButton("Collapse")
+        self.health_toggle.clicked.connect(self.toggle_health)
+        status_head.addWidget(status_heading)
+        status_head.addStretch(1)
+        status_head.addWidget(self.health_toggle)
+        status_card_layout.addLayout(status_head)
+
+        self.health_body = QWidget()
+        body_layout = QVBoxLayout(self.health_body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(10)
+
+        status_metrics = QHBoxLayout()
+        status_metrics.setSpacing(12)
+        self.analysis_frames_card = make_card("Frames in view", str(len(self.current_rows)), "#39C5FF")
+        self.analysis_ids_card = make_card("Unique CAN IDs", str(len(set(r[1] for r in self.current_rows))), "#39C5FF")
+        self.analysis_alerts_card = make_card("Rows labelled ALERT", str(sum(1 for r in self.current_rows if str(r[4]).upper() == "ALERT")), "#FFB547")
+        status_metrics.addWidget(self.analysis_frames_card)
+        status_metrics.addWidget(self.analysis_ids_card)
+        status_metrics.addWidget(self.analysis_alerts_card)
+        body_layout.addLayout(status_metrics)
+
+        self.source_status = QLabel()
+        self.source_status.setWordWrap(True)
+        self.last_refresh = QLabel("UI refresh: waiting…")
+        self.detector_status = QLabel("ML detector: not connected through this dashboard")
+        self.detector_status.setWordWrap(True)
+        for label in (self.source_status, self.last_refresh, self.detector_status):
+            label.setStyleSheet("background-color: #101F33; border: 1px solid #203B59; border-radius: 8px; padding: 10px; color: #DCE8F7;")
+        body_layout.addWidget(self.source_status)
+        body_layout.addWidget(self.last_refresh)
+        body_layout.addWidget(self.detector_status)
+
+        refresh_button = QPushButton("↻  Refresh recorded data")
+        refresh_button.clicked.connect(lambda: self.refresh_live_data(True))
+        body_layout.addWidget(refresh_button, 0, Qt.AlignmentFlag.AlignLeft)
+
+        # Compact CAN-ID distribution bars (click a bar to filter traffic).
+        dist_title = QLabel("TRAFFIC SHARE BY CAN ID  (click a bar to filter CAN Traffic)")
+        dist_title.setStyleSheet("color: #A9BED7; font-size: 13px; font-weight: bold; margin-top: 4px;")
+        body_layout.addWidget(dist_title)
+        self.analysis_bars = QVBoxLayout()
+        self.analysis_bars.setSpacing(7)
+        body_layout.addLayout(self.analysis_bars)
+
+        status_card_layout.addWidget(self.health_body)
+        page.addWidget(status_card)
+
+                # ---------------- Header: title + tabs on one row ----------------
+        tabs.tabBar().hide()  # the header buttons below replace the tab bar
+        header = QWidget()
+        header.setObjectName("content")
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(24, 10, 24, 0)
+        header_row.setSpacing(0)
+        title_a = QLabel("CAN-")
+        title_a.setObjectName("heading")
+        title_b = QLabel("Sentinel")
+        title_b.setObjectName("headingAccent")
+        header_row.addWidget(title_a)
+        header_row.addWidget(title_b)
+        header_row.addSpacing(32)
+        self.nav_group = QButtonGroup(self)
+        self.nav_buttons = []
+        for i in range(tabs.count()):
+            b = QPushButton(tabs.tabText(i))
+            b.setObjectName("navTab")
+            b.setCheckable(True)
+            b.setChecked(i == 0)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _c, i=i: tabs.setCurrentIndex(i))
+            self.nav_group.addButton(b)
+            self.nav_buttons.append(b)
+            header_row.addWidget(b, 0, Qt.AlignmentFlag.AlignBottom)
+        header_row.addStretch(1)
+        tabs.currentChanged.connect(lambda i: self.nav_buttons[i].setChecked(True))
+        outer_layout.addWidget(header)
+
+        outer_layout.addWidget(tabs, 1)
+        self.refresh_live_data(True)
+
+        # Auto-refresh every second (skipped while paused).
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setInterval(1000)
+        self.refresh_timer.timeout.connect(self.refresh_live_data)
+        self.refresh_timer.start()
 
         # ---------------- Zoom controls ----------------
 
@@ -985,8 +1656,125 @@ class Dashboard(QMainWindow):
             self,
             activated=lambda: self.zoom_slider.setValue(100),
         )
+        for n in range(3):
+            QShortcut(
+                QKeySequence(f"Ctrl+{n + 1}"), self,
+                activated=lambda n=n: self.tabs.setCurrentIndex(n),
+            )
+        QShortcut(QKeySequence("F5"), self, activated=lambda: self.refresh_live_data(True))
+        QShortcut(QKeySequence("Ctrl+F"), self, activated=self.focus_search)
 
         self.setCentralWidget(root)
+
+    # ----------------------------------------------------------- interaction
+
+    def go_to(self, index):
+        self.tabs.setCurrentIndex(index)
+
+    def focus_search(self):
+        self.tabs.setCurrentIndex(self.TAB_TRAFFIC)
+        self.traffic_search.setFocus()
+        self.traffic_search.selectAll()
+
+    def filter_by_id(self, can_id):
+        """Jump to CAN Traffic with the search box set to one CAN ID."""
+        self.status_filter.setCurrentIndex(0)
+        self.traffic_search.setText(str(can_id))
+        self.tabs.setCurrentIndex(self.TAB_TRAFFIC)
+
+    def toggle_overview_table(self):
+        show = not self.overview_table.isVisible()
+        self.overview_table.setVisible(show)
+        self.table_toggle.setText("Hide table" if show else "Show table")
+
+    def toggle_health(self):
+        show = not self.health_body.isVisible()
+        self.health_body.setVisible(show)
+        self.health_toggle.setText("Collapse" if show else "Expand")
+
+    def set_paused(self, paused):
+        self.paused = paused
+        self.pause_button.setText("▶  Resume refresh" if paused else "⏸  Pause refresh")
+        if paused:
+            self.last_refresh.setText(self.last_refresh.text() + "  (auto-refresh paused)")
+        else:
+            self.refresh_live_data(True)
+
+    def _style_alert_details(self, accent):
+        self.alert_details.setStyleSheet(
+            "background-color: #101F33; border: 1px solid #294967; "
+            f"border-left: 4px solid {accent}; border-radius: 10px; "
+            "padding: 20px; font-size: 14px; line-height: 1.4;"
+        )
+
+    def set_alert_reviewed(self, reviewed):
+        self.alert_reviewed = reviewed
+        self.review_button.setText("Reviewed ✓  (click to undo)" if reviewed else "Mark as reviewed")
+        self._style_alert_details("#35E58B" if reviewed else "#FFB547")
+        prefix = "REVIEWED\n\n" if reviewed else ""
+        self.alert_details.setText(prefix + self.alert_summary)
+        base = (
+            "Latest alert  —  SAMPLE ALERT, not a detection"
+            if IS_SAMPLE_ALERT else "Latest alert"
+        )
+        self.alert_title.setText(base + ("  •  reviewed" if reviewed else ""))
+
+    def filter_traffic_table(self, _arg=None):
+        needle = self.traffic_search.text().strip().lower()
+        mode = self.status_filter.currentIndex()  # 0 all, 1 OK, 2 ALERT
+        table = self.traffic_table
+        shown = 0
+        for row in range(table.rowCount()):
+            status_item = table.item(row, 5)
+            is_alert = bool(status_item and "ALERT" in status_item.text())
+            match = not (mode == 1 and is_alert) and not (mode == 2 and not is_alert)
+            if match and needle:
+                match = any(
+                    table.item(row, col) and needle in table.item(row, col).text().lower()
+                    for col in range(table.columnCount())
+                )
+            table.setRowHidden(row, not match)
+            shown += match
+        self.traffic_count.setText(f"Showing {shown} of {table.rowCount()} recent rows")
+
+    def show_row_detail(self):
+        t = self.traffic_table
+        r = t.currentRow()
+        if r < 0 or t.isRowHidden(r) or not t.item(r, 0):
+            self.row_detail.setText("Select a row to decode it.")
+            return
+        ts, cid, system, dlc, data, status = (t.item(r, c).text() for c in range(6))
+        status = status.replace("●", "").strip()
+        pairs = " ".join(data[i:i + 2] for i in range(0, len(data), 2))
+        e = html.escape
+        col = "#FF5A66" if status == "ALERT" else "#35E58B"
+        self.row_detail.setText(
+            f"<b>{e(cid)}</b>  ·  {e(system)}  ·  <span style='color:{col}'>{e(status)}</span><br>"
+            f"timestamp {e(ts)}  |  dlc {e(dlc)}<br>"
+            f"bytes: <span style='font-family:Consolas,monospace'>{e(pairs)}</span>"
+        )
+
+    def export_traffic_csv(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export shown rows", "can_traffic_export.csv", "CSV files (*.csv)"
+        )
+        if not path:
+            return
+        t = self.traffic_table
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow([t.horizontalHeaderItem(c).text() for c in range(t.columnCount())])
+                for r in range(t.rowCount()):
+                    if t.isRowHidden(r):
+                        continue
+                    w.writerow([
+                        t.item(r, c).text().replace("●", "").strip() if t.item(r, c) else ""
+                        for c in range(t.columnCount())
+                    ])
+            self.traffic_count.setText(f"Exported shown rows to {Path(path).name}")
+        except OSError as e:
+            self.traffic_count.setText(f"Export failed: {e}")
 
     def set_zoom(self, value):
         """Adjust the interface font size while preserving the dark theme."""
