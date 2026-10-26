@@ -17,7 +17,7 @@ sudo ip link add dev vcan0 type vcan
 sudo ip link set up vcan0
 
 # 2. Compile (from the repository root)
-gcc -Wall -Wextra -o ecu_sim/ecu_simulator ecu_sim/ecu_simulator.c
+gcc -Wall -Wextra -pthread -o ecu_sim/ecu_simulator ecu_sim/ecu_simulator.c -lpthread -lrt
 
 # 3. Run, then watch traffic in a second terminal
 ./ecu_sim/ecu_simulator
@@ -90,7 +90,7 @@ Available build targets:
 
 | Command | Action | Description |
 | :--- | :--- | :--- |
-| `make` / `make all` | Compile binaries | Builds `ecu_simulator` and `test_payloads` with `-Wall -Wextra -Wpedantic -std=c11 -O2` |
+| `make` / `make all` | Compile binaries | Builds `ecu_simulator` and `test_payloads` with `-Wall -Wextra -Wpedantic -std=c11 -O2 -pthread` |
 | `make test` | Run test suite | Compiles and executes the 7/7 automated unit test suite |
 | `make setup-vcan` | Setup network | Checks and configures the Linux `vcan0` virtual interface |
 | `make clean` | Clean workspace | Safely deletes compiled executable binaries |
@@ -103,14 +103,14 @@ You can also compile individual binaries manually using direct `gcc` commands:
 From the repository root:
 
 ```bash
-gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_sim/ecu_simulator ecu_sim/ecu_simulator.c
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread -o ecu_sim/ecu_simulator ecu_sim/ecu_simulator.c -lpthread -lrt
 gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_sim/test_payloads ecu_sim/test_payloads.c
 ```
 
 From a separate test directory (for example a Kali workspace copy):
 
 ```bash
-gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o ecu_simulator ecu_simulator.c
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread -o ecu_simulator ecu_simulator.c -lpthread -lrt
 gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -o test_payloads test_payloads.c
 ```
 
@@ -381,14 +381,57 @@ The simulator features a high-concurrency multi-threaded distributed architectur
 ### Command-Line Execution Options
 
 ```bash
-# 1. Default: single-threaded bounded scheduler
+# 1. Default: in-place visual ANSI instrument cluster (single-threaded)
 ./ecu_sim/ecu_simulator
 
-# 2. Multi-threaded mode: 6 autonomous ECU threads + 1 physics thread
+# 2. Multi-threaded mode: 6 autonomous ECU threads + 1 physics thread with live cluster
 ./ecu_sim/ecu_simulator --threads
 
-# 3. Multi-threaded mode with deterministic seed and 60-second auto-stop duration
+# 3. Plain scrolling text telemetry (disables dashboard; recommended for file logging)
+./ecu_sim/ecu_simulator --plain
+
+# 4. Multi-threaded mode with deterministic seed and 60-second auto-stop duration
 ./ecu_sim/ecu_simulator --threads --duration 60 42
+```
+
+## Modern ANSI Digital Instrument Cluster
+
+The simulator features a real-time in-place terminal instrument cluster that transforms standard terminal output into an automotive digital dashboard.
+
+### Key Cluster Features:
+* **Zero-Flicker In-Place Redraw:** Uses ANSI cursor addressing (`\033[H`) to refresh the dashboard at 10 Hz without clearing the screen or causing terminal flicker.
+* **Dynamic Graphical Gauges:** Live progress bars for Vehicle Speed, Engine RPM, Brake Pressure, and a center-aligned bidirectional Steering Angle indicator.
+* **Per-ECU Real-Time Activity:** Real-time transmission metrics and frame counters for all 6 CAN IDs alongside their Linux scheduling policies (`SCHED_FIFO` vs `SCHED_OTHER`).
+* **Smart Terminal Detection (`isatty`):** Automatically switches to plain text output if `stdout` is piped to a file (`./ecu_simulator > log.txt`) or a non-interactive CI runner, preventing escape character pollution.
+* **Dual Architecture Support:** Automatically adapts its header and metrics whether running in Single-Threaded or Multi-Threaded distributed mode.
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│  ► CAN-SENTINEL AUTOMOTIVE ECU CLUSTER  (MULTI-THREADED DISTRIBUTED)                   │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  Interface: vcan0  │  Kernel: SocketCAN  │  Workers: 7 pthreads (C11 Lock-Free)        │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  VEHICLE TELEMETRY DYNAMICS                                                            │
+│                                                                                        │
+│  SPEED : [████████████░░░░░░░░░░░░]   65 km/h  (Range: 0-130 km/h)                     │
+│  RPM   : [████████████░░░░░░░░░░░░]  2462 RPM   (Idle: 800, Redline: 4000)             │
+│  BRAKE : [████████████████████████]  100 %     [● BRAKE ENGAGED]                       │
+│  STEER : [            o           ]   +2.4 deg (Right Turn)                            │
+│  TEMP  : [██████████████░░░░░░░░░░]   95.0 °C  [COOLANT NOMINAL]                       │
+│  INFO  : [● MEDIA ON ] Nav Gateway: Route Guidance Active                              │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  PER-ECU TRANSMISSION STATUS & REAL-TIME SCHEDULING                                    │
+│                                                                                        │
+│  [●] 0x0A0  Brake Controller     20 ms ( 50 Hz) │ Frames:     384 │ SCHED_FIFO (80)    │
+│  [●] 0x0B0  Steering Gateway     10 ms (100 Hz) │ Frames:     768 │ SCHED_FIFO (80)    │
+│  [●] 0x100  Powertrain Engine    10 ms (100 Hz) │ Frames:     765 │ SCHED_FIFO (50)    │
+│  [●] 0x200  Speed Sensor         20 ms ( 50 Hz) │ Frames:     384 │ SCHED_FIFO (50)    │
+│  [●] 0x300  Thermal Mgmt        100 ms ( 10 Hz) │ Frames:      76 │ SCHED_OTHER (0)    │
+│  [●] 0x600  Infotainment Media  100 ms ( 10 Hz) │ Frames:      76 │ SCHED_OTHER (0)    │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  TIME: 00:07 / 01:00  [██░░░░░░░░░░░░]   12% │ TOTAL:    2453 frames (Rate: 318.5 fps) │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+ [Press Ctrl+C to stop simulation cleanly]
 ```
 
 ### Concurrency Design & Thread Allocation

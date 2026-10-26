@@ -45,6 +45,7 @@
     - [Step 12.2: Periodic Live Telemetry Banner and Execution Summary](#step-122-periodic-live-telemetry-banner-and-execution-summary)
     - [Step 12.3: Industry-Standard CAN Database (can_sentinel.dbc)](#step-123-industry-standard-can-database-can_sentineldbc)
     - [Step 12.4: Multi-Threaded Distributed Architecture (pthreads & C11 Atomics)](#step-124-multi-threaded-distributed-architecture-pthreads--c11-atomics)
+    - [Step 12.5: Modern ANSI In-Place Digital Instrument Cluster](#step-125-modern-ansi-in-place-digital-instrument-cluster)
 - [Known Limitations](#known-limitations)
 - [Expected Outcome](#expected-outcome)
 - [Next Steps](#next-steps)
@@ -175,6 +176,7 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Step 12.2: periodic live telemetry banner & execution summary | ✅ Done |
 | Step 12.3: industry-standard CAN database (`can_sentinel.dbc`) | ✅ Done |
 | Step 12.4: multi-threaded distributed architecture (`pthreads` & C11 atomics) | ✅ Done |
+| Step 12.5: modern ANSI in-place digital instrument cluster | ✅ Done |
 
 ## Development Workflow and Repository Layout
 
@@ -2917,6 +2919,66 @@ Execution summary: 37920 frames transmitted in 119.23 seconds (average rate: 318
 
 **Result:** Step 12.4 implements a production-grade distributed automotive architecture with 6 independent POSIX ECU threads, dedicated sockets, lock-free C11 atomics, and real-time scheduling, achieving 318.05 fps (99.4% timing precision) across 37,920 transmitted frames.
 
+### Step 12.5: Modern ANSI In-Place Digital Instrument Cluster
+
+> **Environment:** Kali Linux VM (`~/CAN-Sentinel/ecu-simulator`) and Windows repository (`ecu_sim/ecu_simulator.c`)
+> **Status:** 🟢 **Implemented.** To elevate project demonstration quality and provide real-time visual observability without third-party graphical dependencies, a high-tech ANSI-based digital instrument cluster was built directly into `ecu_simulator.c`.
+
+#### Architectural Highlights
+
+1. **Zero-Flicker In-Place Redraw (Pure C, Zero External Libraries):**
+   * Uses standard ANSI cursor-addressing escape sequences (`\033[H` to reposition to row 1, col 1 and `\033[K` to clear to line end) refreshing smoothly at 10 Hz.
+   * Completely avoids screen-clearing flicker (`\033[2J`), presenting a rock-solid, flicker-free automotive dashboard.
+2. **Dynamic Colored Progress Bars & Gauges:**
+   * **Speedometer Gauge:** 24-column dynamic bar (`[████████░░░░░░░░] 63 km/h`) rendered in emerald green.
+   * **Tachometer (RPM):** Dynamic rev gauge rendered in electric blue (`[████████████░░░░] 2345 RPM`).
+   * **Brake Pressure Warning:** Vibrant yellow alert gauge with active status indicator (`[● BRAKE ENGAGED]`).
+   * **Steering Angle Compass:** Center-aligned bidirectional heading indicator (`[ ◀───o───> ] -2.8 deg`).
+3. **Per-ECU Real-Time Activity & Scheduling Table:**
+   * Displays live transmitted packet counters for all 6 CAN IDs, their nominal periods/frequencies, and active Linux scheduling policies (`SCHED_FIFO` priorities vs `SCHED_OTHER`).
+4. **Smart Terminal Fallback (`isatty()`):**
+   * Automatically disables ANSI formatting and in-place cursor movement when `stdout` is redirected to a file or pipe (`./ecu_simulator > run.log`), ensuring clean log files for automated scripts.
+   * Provides `--plain` / `-p` CLI flag to force traditional scrolling text telemetry whenever desired.
+5. **Universal Architecture Compatibility:**
+   * Dynamically adapts its header to display whether the simulator is executing in single-threaded mode (`1 Main Thread (Cooperative Yield)`) or multi-threaded mode (`7 pthreads (C11 Lock-Free)`).
+
+#### Terminal Dashboard Preview
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│  ► CAN-SENTINEL AUTOMOTIVE ECU CLUSTER  (MULTI-THREADED DISTRIBUTED)                   │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  Interface: vcan0  │  Kernel: SocketCAN  │  Workers: 7 pthreads (C11 Lock-Free)        │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  VEHICLE TELEMETRY DYNAMICS                                                            │
+│                                                                                        │
+│  SPEED : [████████████░░░░░░░░░░░░]   65 km/h  (Range: 0-130 km/h)                     │
+│  RPM   : [████████████░░░░░░░░░░░░]  2462 RPM   (Idle: 800, Redline: 4000)             │
+│  BRAKE : [████████████████████████]  100 %     [● BRAKE ENGAGED]                       │
+│  STEER : [            o           ]   +2.4 deg (Right Turn)                            │
+│  TEMP  : [██████████████░░░░░░░░░░]   95.0 °C  [COOLANT NOMINAL]                       │
+│  INFO  : [● MEDIA ON ] Nav Gateway: Route Guidance Active                              │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  PER-ECU TRANSMISSION STATUS & REAL-TIME SCHEDULING                                    │
+│                                                                                        │
+│  [●] 0x0A0  Brake Controller     20 ms ( 50 Hz) │ Frames:     384 │ SCHED_FIFO (80)    │
+│  [●] 0x0B0  Steering Gateway     10 ms (100 Hz) │ Frames:     768 │ SCHED_FIFO (80)    │
+│  [●] 0x100  Powertrain Engine    10 ms (100 Hz) │ Frames:     765 │ SCHED_FIFO (50)    │
+│  [●] 0x200  Speed Sensor         20 ms ( 50 Hz) │ Frames:     384 │ SCHED_FIFO (50)    │
+│  [●] 0x300  Thermal Mgmt        100 ms ( 10 Hz) │ Frames:      76 │ SCHED_OTHER (0)    │
+│  [●] 0x600  Infotainment Media  100 ms ( 10 Hz) │ Frames:      76 │ SCHED_OTHER (0)    │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  TIME: 00:07 / 01:00  [██░░░░░░░░░░░░]   12% │ TOTAL:    2453 frames (Rate: 318.5 fps) │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+ [Press Ctrl+C to stop simulation cleanly]
+```
+
+![Modern ANSI Digital Instrument Cluster](screenshots/44-ansi-cluster-dashboard.png)
+
+**Screenshot 44:** Real-time in-place ANSI digital instrument cluster running on `vcan0` with dynamic signal gauges, per-ECU throughput table, and progress bar.
+
+**Result:** Step 12.5 provides a professional automotive digital dashboard embedded directly in standard C, enabling real-time visual demonstration of CAN signals, bus throughput, and thread scheduling.
+
 ---
 
 ## Known Limitations
@@ -2941,4 +3003,4 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 ## Next Steps
 
 1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
-2. Automated payload tests, unified Makefile, live telemetry, DBC database, and multi-threaded architecture in Week 3 (Steps 12, 12.1, 12.2, 12.3, and 12.4) complete.
+2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, and ANSI digital cluster in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, and 12.5) complete.

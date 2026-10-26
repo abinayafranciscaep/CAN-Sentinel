@@ -27,7 +27,20 @@
 #define BRAKE_HOLD_MIN_US 2000000L
 #define BRAKE_HOLD_MAX_US 6000000L
 #define TELEMETRY_INTERVAL_US 5000000L
-#define SCHEDULER_SLACK_PERIODS 5
+#define DASHBOARD_REFRESH_US 100000L
+#define SCHEDULER_SLACK_PERIODS 10
+
+/* ANSI Color Escape Codes */
+#define ANSI_RESET   "\033[0m"
+#define ANSI_BOLD    "\033[1m"
+#define ANSI_CYAN    "\033[1;36m"
+#define ANSI_GREEN   "\033[1;32m"
+#define ANSI_YELLOW  "\033[1;33m"
+#define ANSI_BLUE    "\033[1;34m"
+#define ANSI_MAGENTA "\033[1;35m"
+#define ANSI_RED     "\033[1;31m"
+#define ANSI_WHITE   "\033[1;37m"
+#define ANSI_GRAY    "\033[0;90m"
 
 typedef struct {
     canid_t can_id;
@@ -58,7 +71,27 @@ typedef struct {
     atomic_int infotainment_status;
 } LockFreeVehicleState;
 
+/* Unified telemetry snapshot for rendering dashboard */
+typedef struct {
+    const char *arch_mode;
+    const char *workers_desc;
+    bool is_multithreaded;
+    unsigned long total_frames;
+    double fps;
+    double elapsed_s;
+    long duration_sec;
+    int speed_kmh;
+    int rpm;
+    int steer_deci;
+    int brake_switch;
+    int brake_pressure;
+    int engine_temp;
+    int infotainment;
+    unsigned long ecu_counts[ECU_COUNT];
+} TelemetrySnapshot;
+
 static volatile sig_atomic_t running = 1;
+static bool use_dashboard = true;
 
 /* Single-threaded state storage */
 static ECU ecus[ECU_COUNT] = {
@@ -72,17 +105,18 @@ static ECU ecus[ECU_COUNT] = {
 
 /* Multi-threaded ECU specifications with real-time priority mappings */
 static ThreadECUConfig thread_configs[ECU_COUNT] = {
-    {0, 0x0A0, "Brake",        20000, 80, SCHED_FIFO,  0},  /* ASIL-D: Chassis Safety */
-    {1, 0x0B0, "Steering",     10000, 80, SCHED_FIFO,  0},  /* ASIL-D: Chassis Safety */
-    {2, 0x100, "Engine RPM",   10000, 50, SCHED_FIFO,  0},  /* ASIL-B: Powertrain */
-    {3, 0x200, "Speed",        20000, 50, SCHED_FIFO,  0},  /* ASIL-B: Powertrain */
-    {4, 0x300, "Temperature", 100000,  0, SCHED_OTHER, 0},  /* QM: Thermal Monitoring */
-    {5, 0x600, "Infotainment", 100000,  0, SCHED_OTHER, 0}   /* QM: Comfort & Media */
+    {0, 0x0A0, "Brake Controller", 20000, 80, SCHED_FIFO,  0},  /* ASIL-D: Chassis Safety */
+    {1, 0x0B0, "Steering Gateway", 10000, 80, SCHED_FIFO,  0},  /* ASIL-D: Chassis Safety */
+    {2, 0x100, "Powertrain Engine",10000, 50, SCHED_FIFO,  0},  /* ASIL-B: Powertrain */
+    {3, 0x200, "Speed Sensor",     20000, 50, SCHED_FIFO,  0},  /* ASIL-B: Powertrain */
+    {4, 0x300, "Thermal Mgmt",    100000,  0, SCHED_OTHER, 0},  /* QM: Thermal Monitoring */
+    {5, 0x600, "Infotainment Media",100000,0, SCHED_OTHER, 0}   /* QM: Comfort & Media */
 };
 
 /* Lock-free state for multi-threaded mode */
 static LockFreeVehicleState atomic_state;
 static atomic_ulong atomic_total_frames;
+static atomic_ulong atomic_ecu_counts[ECU_COUNT];
 
 /* Single-threaded fallback state variables */
 static int st_brake_pressure = 0;
@@ -92,6 +126,7 @@ static int st_engine_rpm = 2300;
 static int st_vehicle_speed = 60;
 static int st_engine_temp_c = 90;
 static uint8_t st_infotainment_status = 1;
+static unsigned long st_ecu_counts[ECU_COUNT] = {0};
 
 static struct timespec next_signal_update;
 static struct timespec next_brake_toggle;
@@ -182,6 +217,201 @@ static int open_vcan_socket(const char *ifname)
 }
 
 /* ============================================================================
+ * MODERN ANSI IN-PLACE CLUSTER DASHBOARD
+ * ============================================================================ */
+
+static void make_gauge_bar(char *buf, size_t buf_sz, int val, int min_val, int max_val, int width, const char *color)
+{
+    int clamped = clamp_int(val, min_val, max_val);
+    int filled = (max_val > min_val) ? ((clamped - min_val) * width / (max_val - min_val)) : 0;
+    if (filled > width) filled = width;
+
+    int pos = snprintf(buf, buf_sz, "%s[", color);
+    for (int i = 0; i < width && (size_t)pos < buf_sz - 8; i++) {
+        if (i < filled) {
+            pos += snprintf(buf + pos, buf_sz - pos, "█");
+        } else {
+            pos += snprintf(buf + pos, buf_sz - pos, "░");
+        }
+    }
+    snprintf(buf + pos, buf_sz - pos, "]%s", ANSI_RESET);
+}
+
+static void make_steer_bar(char *buf, size_t buf_sz, int angle_deci, int width, const char *color)
+{
+    int center = width / 2;
+    int offset = (angle_deci * center) / 450;
+    if (offset < -center) offset = -center;
+    if (offset > center) offset = center;
+    int mark = center + offset;
+
+    char bar[40];
+    if (width >= (int)sizeof(bar)) width = sizeof(bar) - 1;
+    memset(bar, ' ', width);
+    bar[width] = '\0';
+
+    if (offset < 0) {
+        bar[mark] = '<';
+        for (int i = mark + 1; i < center; i++) bar[i] = '-';
+        bar[center] = 'o';
+    } else if (offset > 0) {
+        bar[center] = 'o';
+        for (int i = center + 1; i < mark; i++) bar[i] = '-';
+        bar[mark] = '>';
+    } else {
+        bar[center] = 'o';
+    }
+
+    snprintf(buf, buf_sz, "%s[%s]%s", color, bar, ANSI_RESET);
+}
+
+static void render_dashboard_cluster(const TelemetrySnapshot *s)
+{
+    int minutes = (int)(s->elapsed_s / 60.0);
+    int seconds = (int)(s->elapsed_s) % 60;
+
+    char speed_bar[128];
+    char rpm_bar[128];
+    char brake_bar[128];
+    char steer_bar[128];
+    char temp_bar[128];
+    char dur_bar[128];
+
+    make_gauge_bar(speed_bar, sizeof(speed_bar), s->speed_kmh, 0, 130, 24, ANSI_GREEN);
+    make_gauge_bar(rpm_bar, sizeof(rpm_bar), s->rpm, 800, 4000, 24, ANSI_BLUE);
+    make_gauge_bar(brake_bar, sizeof(brake_bar), s->brake_pressure, 0, 100, 24,
+                   (s->brake_switch ? ANSI_YELLOW : ANSI_GRAY));
+    make_steer_bar(steer_bar, sizeof(steer_bar), s->steer_deci, 24, ANSI_CYAN);
+    make_gauge_bar(temp_bar, sizeof(temp_bar), s->engine_temp, 80, 105, 24, ANSI_MAGENTA);
+
+    int dur_pct = 0;
+    if (s->duration_sec > 0) {
+        dur_pct = (int)((s->elapsed_s * 100.0) / (double)s->duration_sec);
+        if (dur_pct > 100) dur_pct = 100;
+        make_gauge_bar(dur_bar, sizeof(dur_bar), dur_pct, 0, 100, 14, ANSI_WHITE);
+    } else {
+        snprintf(dur_bar, sizeof(dur_bar), "[  CONTINUOUS RUN  ]");
+    }
+
+    const char *turn_str = "Straight  ";
+    if (s->steer_deci < -15) turn_str = "Left Turn ";
+    else if (s->steer_deci > 15) turn_str = "Right Turn";
+
+    /* Move cursor to row 1, col 1 without clearing entire screen (zero flicker) */
+    printf("\033[H");
+
+    /* Border top (exact 90 display columns: col 1 to 90) */
+    printf("%s┌────────────────────────────────────────────────────────────────────────────────────────┐%s\033[K\n", ANSI_CYAN, ANSI_RESET);
+
+    int title_pad = 45 - (int)strlen(s->arch_mode);
+    if (title_pad < 0) title_pad = 0;
+    printf("%s│%s  %s► CAN-SENTINEL AUTOMOTIVE ECU CLUSTER%s  %s(%s)%s%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, ANSI_WHITE, ANSI_RESET, ANSI_YELLOW, s->arch_mode, ANSI_RESET,
+           title_pad, "", ANSI_CYAN, ANSI_RESET);
+    printf("%s├────────────────────────────────────────────────────────────────────────────────────────┤%s\033[K\n", ANSI_CYAN, ANSI_RESET);
+
+    /* Architecture meta line */
+    int meta_pad = 34 - (int)strlen(s->workers_desc);
+    if (meta_pad < 0) meta_pad = 0;
+    printf("%s│%s  Interface: %svcan0%s  │  Kernel: %sSocketCAN%s  │  Workers: %s%s%s%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, ANSI_WHITE, ANSI_RESET, ANSI_WHITE, ANSI_RESET,
+           ANSI_GREEN, s->workers_desc, ANSI_RESET,
+           meta_pad, "", ANSI_CYAN, ANSI_RESET);
+    printf("%s├────────────────────────────────────────────────────────────────────────────────────────┤%s\033[K\n", ANSI_CYAN, ANSI_RESET);
+
+    /* Telemetry gauges section */
+    printf("%s│%s  %sVEHICLE TELEMETRY DYNAMICS%s%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, ANSI_WHITE, ANSI_RESET, 60, "", ANSI_CYAN, ANSI_RESET);
+    printf("%s│%*s\033[90G%s│%s\033[K\n", ANSI_CYAN, 88, "", ANSI_CYAN, ANSI_RESET);
+
+    printf("%s│%s  SPEED : %s  %s%3d km/h%s  (Range: 0-130 km/h)%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, speed_bar, ANSI_GREEN, s->speed_kmh, ANSI_RESET,
+           21, "", ANSI_CYAN, ANSI_RESET);
+
+    printf("%s│%s  RPM   : %s  %s%4d RPM%s   (Idle: 800, Redline: 4000)%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, rpm_bar, ANSI_BLUE, s->rpm, ANSI_RESET,
+           13, "", ANSI_CYAN, ANSI_RESET);
+
+    if (s->brake_switch) {
+        printf("%s│%s  BRAKE : %s  %s%3d %%%s     %s[● BRAKE ENGAGED]%s%*s\033[90G%s│%s\033[K\n",
+               ANSI_CYAN, ANSI_RESET, brake_bar, ANSI_YELLOW, s->brake_pressure, ANSI_RESET,
+               ANSI_YELLOW, ANSI_RESET, 23, "", ANSI_CYAN, ANSI_RESET);
+    } else {
+        printf("%s│%s  BRAKE : %s  %s  0 %%%s     %s[○ RELEASED]     %s%*s\033[90G%s│%s\033[K\n",
+               ANSI_CYAN, ANSI_RESET, brake_bar, ANSI_GRAY, ANSI_RESET,
+               ANSI_GRAY, ANSI_RESET, 23, "", ANSI_CYAN, ANSI_RESET);
+    }
+
+    printf("%s│%s  STEER : %s  %s%+5.1f deg%s (%-10s)%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, steer_bar, ANSI_CYAN, (double)s->steer_deci / 10.0, ANSI_RESET,
+           turn_str, 28, "", ANSI_CYAN, ANSI_RESET);
+
+    printf("%s│%s  TEMP  : %s  %s%5.1f °C%s  [COOLANT NOMINAL]%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, temp_bar, ANSI_MAGENTA, (double)s->engine_temp, ANSI_RESET,
+           23, "", ANSI_CYAN, ANSI_RESET);
+
+    printf("%s│%s  INFO  : %s[%s] Nav Gateway: Route Guidance Active%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET,
+           (s->infotainment ? ANSI_GREEN : ANSI_GRAY),
+           (s->infotainment ? "● MEDIA ON " : "○ MEDIA OFF"),
+           30, "", ANSI_CYAN, ANSI_RESET);
+
+    printf("%s├────────────────────────────────────────────────────────────────────────────────────────┤%s\033[K\n", ANSI_CYAN, ANSI_RESET);
+
+    /* Per-ECU Status Table */
+    printf("%s│%s  %sPER-ECU TRANSMISSION STATUS & REAL-TIME SCHEDULING%s%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, ANSI_WHITE, ANSI_RESET, 36, "", ANSI_CYAN, ANSI_RESET);
+    printf("%s│%*s\033[90G%s│%s\033[K\n", ANSI_CYAN, 88, "", ANSI_CYAN, ANSI_RESET);
+
+    for (int i = 0; i < ECU_COUNT; i++) {
+        const char *policy_str = (thread_configs[i].sched_policy == SCHED_FIFO) ? "SCHED_FIFO" : "SCHED_OTHER";
+        int prio = thread_configs[i].rt_priority;
+        char prio_buf[32];
+        if (thread_configs[i].sched_policy == SCHED_FIFO) {
+            snprintf(prio_buf, sizeof(prio_buf), "%s (%d)", policy_str, prio);
+        } else {
+            snprintf(prio_buf, sizeof(prio_buf), "%s (0)", policy_str);
+        }
+
+        int hz = (int)(1000000L / thread_configs[i].period_us);
+        printf("%s│%s  [%s●%s] 0x%03X  %-19s %3ld ms (%3d Hz) │ Frames: %7lu │ %-15s    \033[90G%s│%s\033[K\n",
+               ANSI_CYAN, ANSI_RESET,
+               ANSI_GREEN, ANSI_RESET,
+               thread_configs[i].can_id,
+               thread_configs[i].name,
+               thread_configs[i].period_us / 1000L,
+               hz,
+               s->ecu_counts[i],
+               prio_buf,
+               ANSI_CYAN, ANSI_RESET);
+    }
+
+    printf("%s├────────────────────────────────────────────────────────────────────────────────────────┤%s\033[K\n", ANSI_CYAN, ANSI_RESET);
+
+    /* Bottom footer summary */
+    if (s->duration_sec > 0) {
+        int dur_m = (int)(s->duration_sec / 60);
+        int dur_s = (int)(s->duration_sec % 60);
+        printf("%s│%s  TIME: %02d:%02d / %02d:%02d  %s %3d%% │ %sTOTAL: %7lu frames (Rate: %5.1f fps)%s \033[90G%s│%s\033[K\n",
+               ANSI_CYAN, ANSI_RESET,
+               minutes, seconds, dur_m, dur_s,
+               dur_bar, dur_pct,
+               ANSI_WHITE, s->total_frames, s->fps, ANSI_RESET,
+               ANSI_CYAN, ANSI_RESET);
+    } else {
+        printf("%s│%s  ELAPSED: %02d:%02d (Continuous) │ %sTOTAL FRAMES: %7lu │ RATE: %5.1f fps%s%*s\033[90G%s│%s\033[K\n",
+               ANSI_CYAN, ANSI_RESET,
+               minutes, seconds,
+               ANSI_WHITE, s->total_frames, s->fps, ANSI_RESET,
+               17, "", ANSI_CYAN, ANSI_RESET);
+    }
+
+    printf("%s└────────────────────────────────────────────────────────────────────────────────────────┘%s\033[K\n", ANSI_CYAN, ANSI_RESET);
+    printf(" %s[Press Ctrl+C to stop simulation cleanly]%s\033[K\n", ANSI_GRAY, ANSI_RESET);
+    fflush(stdout);
+}
+
+/* ============================================================================
  * SINGLE-THREADED ENGINE (Original Rock-Solid Baseline)
  * ============================================================================ */
 
@@ -264,7 +494,7 @@ static void st_prepare_frame(const ECU *ecu, struct can_frame *frame)
     frame->data[7] = ecu->counter;
 }
 
-static int st_send_frame(int socket_fd, ECU *ecu)
+static int st_send_frame(int socket_fd, ECU *ecu, int index)
 {
     struct can_frame frame;
     st_prepare_frame(ecu, &frame);
@@ -280,6 +510,7 @@ static int st_send_frame(int socket_fd, ECU *ecu)
     }
 
     ecu->counter++;
+    st_ecu_counts[index]++;
     return 0;
 }
 
@@ -294,7 +525,24 @@ static int run_singlethreaded(long duration_sec)
     struct timespec now;
     struct timespec start_time;
     struct timespec next_telemetry;
+    struct timespec next_dashboard;
     unsigned long total_frames = 0;
+
+    if (!use_dashboard) {
+        printf("Architecture: Single-Threaded Bounded Scheduler\n");
+        printf("CAN interface: vcan0\n");
+        printf("Protocol: six periodic ECU frames, DLC 8\n");
+        printf("Timing jitter: approximately +/-1 ms\n");
+        if (duration_sec > 0) {
+            printf("Simulation duration: %ld seconds (auto-stop)\n", duration_sec);
+        }
+        printf("Press Ctrl+C to stop.\n");
+        fflush(stdout);
+    } else {
+        /* Clear screen and hide cursor for smooth in-place cluster */
+        printf("\033[2J\033[?25l");
+        fflush(stdout);
+    }
 
     if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
         perror("Failed to read monotonic clock");
@@ -305,22 +553,13 @@ static int run_singlethreaded(long duration_sec)
     start_time = now;
     next_signal_update = add_us(now, SIGNAL_UPDATE_US);
     next_telemetry = add_us(now, TELEMETRY_INTERVAL_US);
+    next_dashboard = add_us(now, DASHBOARD_REFRESH_US);
     next_brake_toggle = add_us(now, random_range(BRAKE_HOLD_MIN_US, BRAKE_HOLD_MAX_US));
 
     for (int i = 0; i < ECU_COUNT; i++) {
         long initial_delay = ecus[i].period_us + random_jitter_us();
         ecus[i].next_send = add_us(now, initial_delay);
     }
-
-    printf("Architecture: Single-Threaded Bounded Scheduler\n");
-    printf("CAN interface: vcan0\n");
-    printf("Protocol: six periodic ECU frames, DLC 8\n");
-    printf("Timing jitter: approximately +/-1 ms\n");
-    if (duration_sec > 0) {
-        printf("Simulation duration: %ld seconds (auto-stop)\n", duration_sec);
-    }
-    printf("Press Ctrl+C to stop.\n");
-    fflush(stdout);
 
     while (running) {
         if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
@@ -329,7 +568,7 @@ static int run_singlethreaded(long duration_sec)
         }
 
         if (duration_sec > 0 && (now.tv_sec - start_time.tv_sec) >= duration_sec) {
-            printf("\n[DURATION] Reached configured duration of %ld seconds. Stopping...\n", duration_sec);
+            running = 0;
             break;
         }
 
@@ -342,35 +581,70 @@ static int run_singlethreaded(long duration_sec)
             }
         }
 
-        if (timespec_diff_us(&now, &next_telemetry) >= 0) {
-            long elapsed_sec = now.tv_sec - start_time.tv_sec;
-            int minutes = (int)(elapsed_sec / 60);
-            int seconds = (int)(elapsed_sec % 60);
-            double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
-                             + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
-            double fps = (elapsed_s > 0.0) ? ((double)total_frames / elapsed_s) : 0.0;
-            char brake_info[16];
+        /* Render Dashboard or Plain Telemetry */
+        if (use_dashboard) {
+            if (timespec_diff_us(&now, &next_dashboard) >= 0) {
+                double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
+                                 + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
+                double fps = (elapsed_s > 0.0) ? ((double)total_frames / elapsed_s) : 0.0;
 
-            if (st_brake_switch) {
-                snprintf(brake_info, sizeof(brake_info), "ON (%d%%)", st_brake_pressure);
-            } else {
-                snprintf(brake_info, sizeof(brake_info), "OFF");
+                TelemetrySnapshot snap;
+                snap.arch_mode = "SINGLE-THREADED BOUNDED LOOP";
+                snap.workers_desc = "1 Main Thread (Cooperative Yield)";
+                snap.is_multithreaded = false;
+                snap.total_frames = total_frames;
+                snap.fps = fps;
+                snap.elapsed_s = elapsed_s;
+                snap.duration_sec = duration_sec;
+                snap.speed_kmh = st_vehicle_speed;
+                snap.rpm = st_engine_rpm;
+                snap.steer_deci = st_steering_angle;
+                snap.brake_switch = st_brake_switch;
+                snap.brake_pressure = st_brake_pressure;
+                snap.engine_temp = st_engine_temp_c;
+                snap.infotainment = st_infotainment_status;
+                for (int i = 0; i < ECU_COUNT; i++) {
+                    snap.ecu_counts[i] = st_ecu_counts[i];
+                }
+
+                render_dashboard_cluster(&snap);
+
+                next_dashboard = add_us(next_dashboard, DASHBOARD_REFRESH_US);
+                while (timespec_diff_us(&now, &next_dashboard) >= 0) {
+                    next_dashboard = add_us(next_dashboard, DASHBOARD_REFRESH_US);
+                }
             }
+        } else {
+            if (timespec_diff_us(&now, &next_telemetry) >= 0) {
+                long elapsed_sec = now.tv_sec - start_time.tv_sec;
+                int minutes = (int)(elapsed_sec / 60);
+                int seconds = (int)(elapsed_sec % 60);
+                double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
+                                 + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
+                double fps = (elapsed_s > 0.0) ? ((double)total_frames / elapsed_s) : 0.0;
+                char brake_info[16];
 
-            printf("[TELEMETRY] [%02d:%02d] Frames: %7lu | Rate: %5.1f fps | Speed: %3d km/h | RPM: %4d | Steer: %+5.1f deg | Brake: %s\n",
-                   minutes, seconds, total_frames, fps, st_vehicle_speed, st_engine_rpm,
-                   (double)st_steering_angle / 10.0, brake_info);
-            fflush(stdout);
+                if (st_brake_switch) {
+                    snprintf(brake_info, sizeof(brake_info), "ON (%d%%)", st_brake_pressure);
+                } else {
+                    snprintf(brake_info, sizeof(brake_info), "OFF");
+                }
 
-            next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
-            while (timespec_diff_us(&now, &next_telemetry) >= 0) {
+                printf("[TELEMETRY] [%02d:%02d] Frames: %7lu | Rate: %5.1f fps | Speed: %3d km/h | RPM: %4d | Steer: %+5.1f deg | Brake: %s\n",
+                       minutes, seconds, total_frames, fps, st_vehicle_speed, st_engine_rpm,
+                       (double)st_steering_angle / 10.0, brake_info);
+                fflush(stdout);
+
                 next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
+                while (timespec_diff_us(&now, &next_telemetry) >= 0) {
+                    next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
+                }
             }
         }
 
         for (int i = 0; i < ECU_COUNT && running; i++) {
             if (timespec_diff_us(&now, &ecus[i].next_send) >= 0) {
-                if (st_send_frame(socket_fd, &ecus[i]) < 0) {
+                if (st_send_frame(socket_fd, &ecus[i], i) < 0) {
                     running = 0;
                     break;
                 }
@@ -409,16 +683,7 @@ static int run_singlethreaded(long duration_sec)
             }
 
             long wait_us = timespec_diff_us(&earliest, &now);
-            if (wait_us >= 2000L) {
-                struct timespec delay = {
-                    .tv_sec = wait_us / 1000000L,
-                    .tv_nsec = (wait_us % 1000000L) * 1000L
-                };
-
-                while (nanosleep(&delay, &delay) < 0 && errno == EINTR && running) {
-                    /* Resume sleep after interrupt */
-                }
-            } else if (wait_us > 0) {
+            if (wait_us > 0) {
                 sched_yield();
             }
         }
@@ -426,11 +691,17 @@ static int run_singlethreaded(long duration_sec)
 
     close(socket_fd);
 
+    if (use_dashboard) {
+        /* Restore cursor visibility and position below dashboard */
+        printf("\033[?25h\n\n");
+        fflush(stdout);
+    }
+
     double total_duration_s = (double)(now.tv_sec - start_time.tv_sec)
                             + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
     double avg_fps = (total_duration_s > 0.0) ? ((double)total_frames / total_duration_s) : 0.0;
 
-    printf("\nCAN-Sentinel ECU Simulator stopped.\n");
+    printf("CAN-Sentinel ECU Simulator stopped.\n");
     printf("Execution summary: %lu frames transmitted in %.2f seconds (average rate: %.2f fps).\n",
            total_frames, total_duration_s, avg_fps);
 
@@ -606,6 +877,7 @@ static void *ecu_worker_thread(void *arg)
         ssize_t bytes_sent = write(socket_fd, &frame, sizeof(frame));
         if (bytes_sent == (ssize_t)sizeof(frame)) {
             atomic_fetch_add_explicit(&atomic_total_frames, 1, memory_order_relaxed);
+            atomic_fetch_add_explicit(&atomic_ecu_counts[cfg->id_index], 1, memory_order_relaxed);
         }
 
         clock_gettime(CLOCK_MONOTONIC, &now);
@@ -632,6 +904,7 @@ static int run_multithreaded(long duration_sec)
     struct timespec start_time;
     struct timespec now;
     struct timespec next_telemetry;
+    struct timespec next_dashboard;
 
     /* Initialize atomic state */
     atomic_init(&atomic_state.brake_pressure, 0);
@@ -642,26 +915,35 @@ static int run_multithreaded(long duration_sec)
     atomic_init(&atomic_state.engine_temp_c, 90);
     atomic_init(&atomic_state.infotainment_status, 1);
     atomic_init(&atomic_total_frames, 0);
+    for (int i = 0; i < ECU_COUNT; i++) {
+        atomic_init(&atomic_ecu_counts[i], 0);
+    }
+
+    if (!use_dashboard) {
+        printf("====================================================================\n");
+        printf("CAN-Sentinel ECU Simulator (Multi-Threaded Architecture)\n");
+        printf("====================================================================\n");
+        printf("Concurrency: 6 Autonomous ECU POSIX Threads + 1 Physics Engine Thread\n");
+        printf("CAN interface: vcan0 (Dedicated SocketCAN socket per ECU thread)\n");
+        printf("Synchronization: C11 Lock-Free Atomics (<stdatomic.h> zero mutex contention)\n");
+        printf("Real-Time Scheduling:\n");
+        printf("  - 0x0A0 (Brake)      & 0x0B0 (Steering): SCHED_FIFO Priority 80 (ASIL-D)\n");
+        printf("  - 0x100 (Engine RPM) & 0x200 (Speed):    SCHED_FIFO Priority 50 (ASIL-B)\n");
+        printf("  - 0x300 (Temp)       & 0x600 (Info):     SCHED_OTHER (QM)\n");
+        if (duration_sec > 0) {
+            printf("Simulation duration: %ld seconds (auto-stop)\n", duration_sec);
+        }
+        printf("Press Ctrl+C to stop.\n");
+        printf("====================================================================\n");
+        fflush(stdout);
+    } else {
+        printf("\033[2J\033[?25l");
+        fflush(stdout);
+    }
 
     clock_gettime(CLOCK_MONOTONIC, &start_time);
     next_telemetry = add_us(start_time, TELEMETRY_INTERVAL_US);
-
-    printf("====================================================================\n");
-    printf("CAN-Sentinel ECU Simulator (Multi-Threaded Architecture)\n");
-    printf("====================================================================\n");
-    printf("Concurrency: 6 Autonomous ECU POSIX Threads + 1 Physics Engine Thread\n");
-    printf("CAN interface: vcan0 (Dedicated SocketCAN socket per ECU thread)\n");
-    printf("Synchronization: C11 Lock-Free Atomics (<stdatomic.h> zero mutex contention)\n");
-    printf("Real-Time Scheduling:\n");
-    printf("  - 0x0A0 (Brake)      & 0x0B0 (Steering): SCHED_FIFO Priority 80 (ASIL-D)\n");
-    printf("  - 0x100 (Engine RPM) & 0x200 (Speed):    SCHED_FIFO Priority 50 (ASIL-B)\n");
-    printf("  - 0x300 (Temp)       & 0x600 (Info):     SCHED_OTHER (QM)\n");
-    if (duration_sec > 0) {
-        printf("Simulation duration: %ld seconds (auto-stop)\n", duration_sec);
-    }
-    printf("Press Ctrl+C to stop.\n");
-    printf("====================================================================\n");
-    fflush(stdout);
+    next_dashboard = add_us(start_time, DASHBOARD_REFRESH_US);
 
     /* Launch physics simulation worker thread */
     if (pthread_create(&physics_thread, NULL, physics_worker_thread, NULL) != 0) {
@@ -683,40 +965,74 @@ static int run_multithreaded(long duration_sec)
         clock_gettime(CLOCK_MONOTONIC, &now);
 
         if (duration_sec > 0 && (now.tv_sec - start_time.tv_sec) >= duration_sec) {
-            printf("\n[DURATION] Reached configured duration of %ld seconds. Stopping...\n", duration_sec);
             running = 0;
             break;
         }
 
-        if (timespec_diff_us(&now, &next_telemetry) >= 0) {
-            long elapsed_sec = now.tv_sec - start_time.tv_sec;
-            int minutes = (int)(elapsed_sec / 60);
-            int seconds = (int)(elapsed_sec % 60);
-            double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
-                             + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
-            unsigned long frames = atomic_load_explicit(&atomic_total_frames, memory_order_relaxed);
-            double fps = (elapsed_s > 0.0) ? ((double)frames / elapsed_s) : 0.0;
+        if (use_dashboard) {
+            if (timespec_diff_us(&now, &next_dashboard) >= 0) {
+                double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
+                                 + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
+                unsigned long frames = atomic_load_explicit(&atomic_total_frames, memory_order_relaxed);
+                double fps = (elapsed_s > 0.0) ? ((double)frames / elapsed_s) : 0.0;
 
-            int b_switch = atomic_load_explicit(&atomic_state.brake_switch, memory_order_acquire);
-            int b_press = atomic_load_explicit(&atomic_state.brake_pressure, memory_order_acquire);
-            int spd = atomic_load_explicit(&atomic_state.vehicle_speed, memory_order_acquire);
-            int rpm = atomic_load_explicit(&atomic_state.engine_rpm, memory_order_acquire);
-            int steer = atomic_load_explicit(&atomic_state.steering_angle, memory_order_acquire);
+                TelemetrySnapshot snap;
+                snap.arch_mode = "MULTI-THREADED DISTRIBUTED";
+                snap.workers_desc = "7 pthreads (C11 Lock-Free)";
+                snap.is_multithreaded = true;
+                snap.total_frames = frames;
+                snap.fps = fps;
+                snap.elapsed_s = elapsed_s;
+                snap.duration_sec = duration_sec;
+                snap.speed_kmh = atomic_load_explicit(&atomic_state.vehicle_speed, memory_order_acquire);
+                snap.rpm = atomic_load_explicit(&atomic_state.engine_rpm, memory_order_acquire);
+                snap.steer_deci = atomic_load_explicit(&atomic_state.steering_angle, memory_order_acquire);
+                snap.brake_switch = atomic_load_explicit(&atomic_state.brake_switch, memory_order_acquire);
+                snap.brake_pressure = atomic_load_explicit(&atomic_state.brake_pressure, memory_order_acquire);
+                snap.engine_temp = atomic_load_explicit(&atomic_state.engine_temp_c, memory_order_acquire);
+                snap.infotainment = atomic_load_explicit(&atomic_state.infotainment_status, memory_order_acquire);
+                for (int i = 0; i < ECU_COUNT; i++) {
+                    snap.ecu_counts[i] = atomic_load_explicit(&atomic_ecu_counts[i], memory_order_relaxed);
+                }
 
-            char brake_info[16];
-            if (b_switch) {
-                snprintf(brake_info, sizeof(brake_info), "ON (%d%%)", b_press);
-            } else {
-                snprintf(brake_info, sizeof(brake_info), "OFF");
+                render_dashboard_cluster(&snap);
+
+                next_dashboard = add_us(next_dashboard, DASHBOARD_REFRESH_US);
+                while (timespec_diff_us(&now, &next_dashboard) >= 0) {
+                    next_dashboard = add_us(next_dashboard, DASHBOARD_REFRESH_US);
+                }
             }
+        } else {
+            if (timespec_diff_us(&now, &next_telemetry) >= 0) {
+                long elapsed_sec = now.tv_sec - start_time.tv_sec;
+                int minutes = (int)(elapsed_sec / 60);
+                int seconds = (int)(elapsed_sec % 60);
+                double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
+                                 + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
+                unsigned long frames = atomic_load_explicit(&atomic_total_frames, memory_order_relaxed);
+                double fps = (elapsed_s > 0.0) ? ((double)frames / elapsed_s) : 0.0;
 
-            printf("[TELEMETRY-MT] [%02d:%02d] Frames: %7lu | Rate: %5.1f fps | Speed: %3d km/h | RPM: %4d | Steer: %+5.1f deg | Brake: %s\n",
-                   minutes, seconds, frames, fps, spd, rpm, (double)steer / 10.0, brake_info);
-            fflush(stdout);
+                int b_switch = atomic_load_explicit(&atomic_state.brake_switch, memory_order_acquire);
+                int b_press = atomic_load_explicit(&atomic_state.brake_pressure, memory_order_acquire);
+                int spd = atomic_load_explicit(&atomic_state.vehicle_speed, memory_order_acquire);
+                int rpm = atomic_load_explicit(&atomic_state.engine_rpm, memory_order_acquire);
+                int steer = atomic_load_explicit(&atomic_state.steering_angle, memory_order_acquire);
 
-            next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
-            while (timespec_diff_us(&now, &next_telemetry) >= 0) {
+                char brake_info[16];
+                if (b_switch) {
+                    snprintf(brake_info, sizeof(brake_info), "ON (%d%%)", b_press);
+                } else {
+                    snprintf(brake_info, sizeof(brake_info), "OFF");
+                }
+
+                printf("[TELEMETRY-MT] [%02d:%02d] Frames: %7lu | Rate: %5.1f fps | Speed: %3d km/h | RPM: %4d | Steer: %+5.1f deg | Brake: %s\n",
+                       minutes, seconds, frames, fps, spd, rpm, (double)steer / 10.0, brake_info);
+                fflush(stdout);
+
                 next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
+                while (timespec_diff_us(&now, &next_telemetry) >= 0) {
+                    next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
+                }
             }
         }
 
@@ -725,13 +1041,16 @@ static int run_multithreaded(long duration_sec)
         nanosleep(&tick, NULL);
     }
 
-    printf("\nShutting down multi-threaded ECU nodes cleanly...\n");
-
     /* Join all threads to ensure 100% clean resource deallocation */
     for (int i = 0; i < ECU_COUNT; i++) {
         pthread_join(ecu_threads[i], NULL);
     }
     pthread_join(physics_thread, NULL);
+
+    if (use_dashboard) {
+        printf("\033[?25h\n\n");
+        fflush(stdout);
+    }
 
     clock_gettime(CLOCK_MONOTONIC, &now);
     unsigned long final_frames = atomic_load_explicit(&atomic_total_frames, memory_order_relaxed);
@@ -752,6 +1071,7 @@ static void print_usage(const char *prog_name)
     printf("Usage: %s [OPTIONS] [seed]\n\n", prog_name);
     printf("Options:\n");
     printf("  --threads, -t        Enable distributed multi-threaded architecture (6 pthreads + atomics)\n");
+    printf("  --plain, -p          Disable visual dashboard and use scrolling text telemetry\n");
     printf("  --duration, -d <sec> Auto-stop simulation after specified duration in seconds\n");
     printf("  --help, -h           Show this help message\n\n");
     printf("Positional:\n");
@@ -765,9 +1085,16 @@ int main(int argc, char *argv[])
     bool multithreaded_mode = false;
     long duration_sec = 0;
 
+    /* Automatically disable dashboard if stdout is redirected to a file or pipe */
+    if (!isatty(STDOUT_FILENO)) {
+        use_dashboard = false;
+    }
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--threads") == 0 || strcmp(argv[i], "-t") == 0) {
             multithreaded_mode = true;
+        } else if (strcmp(argv[i], "--plain") == 0 || strcmp(argv[i], "-p") == 0) {
+            use_dashboard = false;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return EXIT_SUCCESS;
@@ -804,7 +1131,6 @@ int main(int argc, char *argv[])
     }
 
     srand(seed);
-    printf("Random seed: %u\n", seed);
 
     (void)nice(-10);
 
