@@ -1043,7 +1043,10 @@ class Dashboard(QMainWindow):
             if CLOCK_STEPS:
                 parts.append(f"timestamp clock steps in file: {CLOCK_STEPS}")
             parts.append(
-                f"alert: {ALERT_FILE.name}" if ALERT
+                f"alert: {ALERT_FILE.name} (sample; not ML-verified)"
+                if IS_SAMPLE_ALERT
+                else f"alert: {ALERT_FILE.name} (loaded; detection not verified)"
+                if ALERT
                 else "alert: none loaded"
             )
             mode_text = "REPLAYING RECORDED FILE  •  NOT LIVE  |  " + "  |  ".join(parts)
