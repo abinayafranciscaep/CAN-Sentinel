@@ -8,7 +8,7 @@ CFLAGS  := -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread
 LDLIBS  := -lpthread -lrt
 TARGETS := ecu_simulator test_payloads
 
-.PHONY: all clean test setup-vcan help
+.PHONY: all clean test setup-vcan dashboard help
 
 # Default target: compile both simulator and automated test runner
 all: $(TARGETS)
@@ -39,6 +39,25 @@ setup-vcan:
 		echo "vcan0 successfully brought up."; \
 	fi
 
+# Launch the real-time Web-Based EV Sport Dashboard bridge
+dashboard:
+	@if [ -f "bridge.py" ]; then \
+		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
+		python3 bridge.py --interface vcan0 --port 8080; \
+	elif [ -f "dashboard/bridge.py" ]; then \
+		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
+		python3 dashboard/bridge.py --interface vcan0 --port 8080; \
+	elif [ -f "../docs/member-1/dashboard/bridge.py" ]; then \
+		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
+		python3 ../docs/member-1/dashboard/bridge.py --interface vcan0 --port 8080; \
+	elif [ -f "docs/member-1/dashboard/bridge.py" ]; then \
+		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
+		python3 docs/member-1/dashboard/bridge.py --interface vcan0 --port 8080; \
+	else \
+		echo "Error: bridge.py not found in current directory or docs/member-1/dashboard."; \
+		exit 1; \
+	fi
+
 # Clean compiled binaries
 clean:
 	rm -f $(TARGETS)
@@ -50,5 +69,6 @@ help:
 	@echo "  make            - Build both ecu_simulator and test_payloads (with pthreads)"
 	@echo "  make test       - Build and run the automated unit test suite"
 	@echo "  make setup-vcan - Configure and activate the vcan0 interface"
+	@echo "  make dashboard  - Launch the real-time Web EV Sport Dashboard (http://localhost:8080)"
 	@echo "  make clean      - Remove compiled executable binaries"
 	@echo "  make help       - Display this help message"

@@ -46,6 +46,7 @@
     - [Step 12.3: Industry-Standard CAN Database (can_sentinel.dbc)](#step-123-industry-standard-can-database-can_sentineldbc)
     - [Step 12.4: Multi-Threaded Distributed Architecture (pthreads & C11 Atomics)](#step-124-multi-threaded-distributed-architecture-pthreads--c11-atomics)
     - [Step 12.5: Modern ANSI In-Place Digital Instrument Cluster](#step-125-modern-ansi-in-place-digital-instrument-cluster)
+    - [Step 12.6: Real-Time Web-Based EV Sport Dashboard (Porsche Taycan / Audi e-tron Style)](#step-126-real-time-web-based-ev-sport-dashboard-porsche-taycan--audi-e-tron-style)
 - [Known Limitations](#known-limitations)
 - [Expected Outcome](#expected-outcome)
 - [Next Steps](#next-steps)
@@ -177,6 +178,7 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Step 12.3: industry-standard CAN database (`can_sentinel.dbc`) | ✅ Done |
 | Step 12.4: multi-threaded distributed architecture (`pthreads` & C11 atomics) | ✅ Done |
 | Step 12.5: modern ANSI in-place digital instrument cluster | ✅ Done |
+| Step 12.6: real-time web-based EV sport dashboard (`make dashboard`) | ✅ Done |
 
 ## Development Workflow and Repository Layout
 
@@ -2981,6 +2983,74 @@ Execution summary: 37920 frames transmitted in 119.23 seconds (average rate: 318
 
 ---
 
+### Step 12.6: Real-Time Web-Based EV Sport Dashboard (Porsche Taycan / Audi e-tron Style)
+
+> **Environment:** Kali Linux VM (`~/CAN-Sentinel/ecu-simulator/dashboard/`) and Windows / Linux browser (`http://localhost:8080`)  
+> **Status:** ✅ **Implemented & Integrated.** To provide commercial-grade, hardware-accelerated automotive visualization alongside the ANSI terminal cluster, a real-time web-based EV Sport Dashboard was developed and integrated into the project build system.
+
+#### Architectural Overview
+
+The dashboard decouples low-level Linux kernel CAN networking from high-fidelity 60 FPS graphics through a dual-tier architecture:
+
+```text
+                      +-----------------------------+
+                      |   C ECU Simulator (vcan0)   |
+                      |    320 frames/sec baseline  |
+                      +--------------+--------------+
+                                     |
+                                     v
+                        [ Linux Virtual CAN: vcan0 ]
+                                     |
+                                     v
+             +-----------------------------------------------+
+             |       Python SocketCAN Bridge (bridge.py)     |
+             |  - Native Linux AF_CAN raw socket reader      |
+             |  - 6-ECU Telemetry & Protocol Decoder         |
+             |  - Physical Bus Load Calculator (~8.19%)      |
+             |  - RFC 6455 WebSocket Server (ws://...:8080) |
+             |  - Static Asset HTTP Server (http://...:8080) |
+             +-----------------------+-----------------------+
+                                     |
+                                     v
+             +-----------------------------------------------+
+             |      EV Sport Digital Frontend (index.html)   |
+             |  - Dark Glassmorphic Taycan / e-tron UI       |
+             |  - 60 FPS Dual Radial Swept Gauges            |
+             |  - Articulated Front Wheels (0x0B0 Steering)  |
+             |  - Active Neon Red Rear Brakes (0x0A0 Brake)  |
+             |  - Holographic Transmission (P/R/N/D1-D5)     |
+             |  - Physical Bus Load & 6-ECU Health Matrix    |
+             |  - Web Audio Synthesized EV Sound Engine      |
+             +-----------------------------------------------+
+```
+
+#### Key Dashboard Capabilities
+
+1. **Native SocketCAN Bridge (`~/CAN-Sentinel/ecu-simulator/dashboard/bridge.py`):**
+   * Binds directly to `AF_CAN` (`PF_CAN, SOCK_RAW, CAN_RAW`) on `vcan0` with zero external pip dependencies.
+   * Unpacks standard 8-byte frames in real time across all 6 CAN IDs (`0x0A0` Brake, `0x0B0` Steering, `0x100` Engine, `0x200` Speed, `0x300` Temp, `0x600` Infotainment).
+   * Computes physical bus load percentage: `(320 frames/sec * 128 bits) / 500,000 bps * 100% ≈ 8.19%`.
+   * Broadcasts low-latency JSON telemetry payloads over RFC 6455 WebSockets at 20 Hz.
+   * Includes built-in HTTP server to serve frontend assets directly on `http://localhost:8080`.
+
+2. **Automotive Glassmorphic Frontend (`~/CAN-Sentinel/ecu-simulator/dashboard/index.html`):**
+   * **Dual 60 FPS Swept Gauges:** Speedometer (0–140 km/h) with sweeping luminous needle, cyan arc trail, digital HUD, and acceleration G-meter; Powertrain RPM (0–5000 RPM) with progressive amber warning and dynamic redline glow (> 3,800 RPM).
+   * **Articulated Top-Down Vehicle Chassis:** Front left and right wheels physically articulate and rotate in real time matching CAN ID `0x0B0` signed angle (-45° to +45°).
+   * **Reactive Neon-Red Brake Lightbar:** Continuous rear LED lightbar and tail lamps ignite bright neon red when CAN ID `0x0A0` brake switch activates.
+   * **Holographic Gear Selector:** `[ P ] [ R ] [ N ] ◄[ D1-D5 ]►` automatic transmission gear calculation derived from vehicle speed.
+   * **Synthesized EV Audio Engine:** Optional Web Audio API synthesizer that modulates electric motor whine frequency and volume in real time with vehicle speed and RPM.
+
+3. **Unified Build Automation (`make dashboard`):**
+   * Integrated directly into `ecu_sim/Makefile`: executing `make dashboard` automatically discovers `bridge.py` and starts the bridge server on `http://localhost:8080`.
+
+![Web-Based EV Sport Dashboard](screenshots/45-web-ev-dashboard.png)
+
+**Screenshot 45:** Real-time web-based EV sport dashboard running side-by-side with SocketCAN simulator on `vcan0`, featuring 60 FPS radial dials, articulated steering wheels, reactive brake lights, and physical bus load monitoring.
+
+**Result:** Step 12.6 completes full-stack automotive observability, connecting low-level Linux SocketCAN systems programming to a modern high-fidelity web dashboard suitable for executive and technical presentations.
+
+---
+
 ## Known Limitations
 
 - Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
@@ -3003,4 +3073,4 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 ## Next Steps
 
 1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
-2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, and ANSI digital cluster in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, and 12.5) complete.
+2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, and real-time Web EV sport dashboard in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, and 12.6) complete.

@@ -1,0 +1,1620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CAN-Sentinel // EV Telemetry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Fira+Code:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    /* ==========================================================================
+       DESIGN SYSTEM & CSS VARIABLES
+       Porsche Taycan / Audi e-tron EV Sport Dashboard Aesthetic
+       ========================================================================== */
+    :root {
+      --bg-dark: #030712;
+      --bg-surface: rgba(4, 15, 23, 0.78);
+      --bg-card: rgba(8, 20, 28, 0.72);
+      --border-cyan: rgba(53, 224, 201, 0.24);
+      --border-glow: rgba(53, 224, 201, 0.45);
+      --border-light: rgba(255, 255, 255, 0.08);
+
+      /* Cyber Cyan Theme Palette */
+      --neon-cyan: #35e0c9;
+      --neon-cyan-dim: #1c9d8c;
+      --neon-cyan-light: #62d1cf;
+      --neon-cyan-glow: rgba(53, 224, 201, 0.85);
+
+      /* Cyber Red Theme Palette */
+      --neon-red: #ff2a5f;
+      --neon-red-dim: #be123c;
+      --neon-red-light: #fb7185;
+      --neon-red-glow: rgba(255, 42, 95, 0.9);
+
+      --neon-blue: #0ea5e9;
+      --neon-blue-glow: rgba(14, 165, 233, 0.6);
+      --neon-green: #10b981;
+      --neon-green-glow: rgba(16, 185, 129, 0.85);
+      --neon-amber: #f59e0b;
+
+      --text-main: #f0fdfa;
+      --text-muted: #94a3b8;
+      --text-dim: #475569;
+
+      --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-tech: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --font-mono: 'Fira Code', 'Outfit', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    html, body {
+      min-height: 100vh;
+      width: 100%;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 50% 20%, rgba(53, 224, 201, 0.08) 0%, transparent 60%),
+        radial-gradient(circle at 15% 85%, rgba(53, 224, 201, 0.05) 0%, transparent 50%),
+        radial-gradient(circle at 85% 85%, rgba(255, 42, 95, 0.05) 0%, transparent 50%),
+        linear-gradient(rgba(255, 255, 255, 0.012) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.012) 1px, transparent 1px);
+      background-size: 100% 100%, 100% 100%, 100% 100%, 30px 30px, 30px 30px;
+      color: var(--text-main);
+      font-family: var(--font-tech);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    /* Subtle CRT Scanline overlay */
+    body::after {
+      content: " ";
+      position: fixed;
+      top: 0; left: 0; bottom: 0; right: 0;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.22) 50%);
+      background-size: 100% 4px;
+      z-index: 999;
+      pointer-events: none;
+      opacity: 0.3;
+    }
+
+    /* ==========================================================================
+       TOP STATUS BAR & NAVIGATION
+       ========================================================================== */
+    .dash-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 24px;
+      background: rgba(8, 12, 18, 0.9);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-cyan);
+      box-shadow: 0 4px 25px rgba(0, 0, 0, 0.6);
+      position: relative;
+      z-index: 100;
+      flex-shrink: 0;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-logo {
+      width: 34px;
+      height: 34px;
+      filter: drop-shadow(0 0 8px var(--neon-cyan));
+    }
+
+    .brand-title {
+      font-family: var(--font-display);
+      font-size: 1.35rem;
+      font-weight: 900;
+      letter-spacing: 2.2px;
+      background: linear-gradient(135deg, #ffffff 10%, var(--neon-cyan-light) 60%, var(--neon-cyan) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      text-transform: uppercase;
+    }
+
+    .brand-subtitle {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      letter-spacing: 1.8px;
+      color: var(--neon-cyan);
+      opacity: 0.9;
+    }
+
+    .header-center-info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .mode-pill-group {
+      display: flex;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 3px;
+      border-radius: 6px;
+      border: 1px solid var(--border-light);
+    }
+
+    .mode-pill {
+      font-family: var(--font-display);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      padding: 5px 14px;
+      border-radius: 4px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.25s ease;
+    }
+
+    .mode-pill.active {
+      background: linear-gradient(135deg, rgba(53, 224, 201, 0.25), rgba(28, 157, 140, 0.35));
+      color: var(--neon-cyan);
+      border: 1px solid var(--neon-cyan);
+      box-shadow: 0 0 14px rgba(53, 224, 201, 0.4);
+      text-shadow: 0 0 8px var(--neon-cyan);
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0, 255, 157, 0.1);
+      border: 1px solid rgba(0, 255, 157, 0.35);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      font-weight: bold;
+      color: var(--neon-green);
+      letter-spacing: 0.8px;
+    }
+
+    .status-badge.error {
+      background: rgba(255, 42, 95, 0.12);
+      border-color: rgba(255, 42, 95, 0.5);
+      color: var(--neon-red);
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--neon-green);
+      box-shadow: 0 0 10px var(--neon-green);
+      animation: pulse-glow 1.4s infinite;
+    }
+
+    .status-badge.error .pulse-dot {
+      background: var(--neon-red);
+      box-shadow: 0 0 10px var(--neon-red);
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.5; }
+    }
+
+    .ctrl-btn {
+      background: rgba(8, 20, 28, 0.7);
+      border: 1px solid var(--border-light);
+      color: var(--text-main);
+      width: 38px;
+      height: 38px;
+      padding: 0;
+      border-radius: 8px;
+      cursor: pointer;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      transition: all 0.25s ease;
+    }
+
+    .ctrl-btn:hover {
+      border-color: var(--neon-cyan);
+      color: var(--neon-cyan);
+      background: rgba(53, 224, 201, 0.12);
+      box-shadow: 0 0 14px rgba(53, 224, 201, 0.35);
+      transform: translateY(-1px);
+    }
+
+    .ctrl-btn.active {
+      background: rgba(53, 224, 201, 0.22);
+      border-color: var(--neon-cyan);
+      color: var(--neon-cyan);
+      box-shadow: 0 0 16px rgba(53, 224, 201, 0.5);
+    }
+
+    /* ==========================================================================
+       MAIN INSTRUMENT CLUSTER STAGE
+       ========================================================================== */
+    .dash-stage {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1.15fr 1fr;
+      gap: 20px;
+      padding: 20px 28px;
+      align-items: center;
+      max-width: 1700px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .instrument-card {
+      background: var(--bg-surface);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: 18px;
+      border: 1px solid var(--border-cyan);
+      padding: 22px;
+      box-shadow: 
+        0 20px 45px rgba(0, 0, 0, 0.6),
+        inset 0 1px 1px rgba(255, 255, 255, 0.1),
+        inset 0 0 30px rgba(53, 224, 201, 0.04);
+      position: relative;
+    }
+
+    .instrument-card::before, .instrument-card::after {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      pointer-events: none;
+    }
+    .instrument-card::before {
+      top: 8px; left: 8px;
+      border-top: 2px solid var(--neon-cyan);
+      border-left: 2px solid var(--neon-cyan);
+    }
+    .instrument-card::after {
+      bottom: 8px; right: 8px;
+      border-bottom: 2px solid var(--neon-cyan);
+      border-right: 2px solid var(--neon-cyan);
+    }
+
+    /* RADIAL GAUGES */
+    .radial-gauge-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .gauge-svg {
+      width: 100%;
+      max-width: 380px;
+      height: auto;
+      filter: drop-shadow(0 0 18px rgba(0, 0, 0, 0.7));
+    }
+
+    .gauge-center-hud {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -46%);
+      text-align: center;
+      pointer-events: none;
+      width: 80%;
+    }
+
+    .hud-label {
+      font-family: var(--font-mono);
+      font-size: 0.92rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .hud-value-large {
+      font-family: var(--font-display);
+      font-size: 4.2rem;
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: 1.5px;
+      color: #ffffff;
+      text-shadow: 
+        0 0 20px var(--neon-cyan-glow),
+        0 0 40px rgba(53, 224, 201, 0.4);
+      margin: 2px 0;
+    }
+
+    .hud-unit {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: 3px;
+      color: var(--neon-cyan);
+      text-shadow: 0 0 10px var(--neon-cyan);
+    }
+
+    .hud-sub-details {
+      margin-top: 6px;
+      display: flex;
+      justify-content: center;
+      gap: 14px;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .sub-tag {
+      background: rgba(255, 255, 255, 0.08);
+      padding: 3px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--border-light);
+    }
+    .sub-tag span {
+      color: var(--neon-cyan);
+      font-weight: bold;
+    }
+
+    .redline-active .hud-value-large {
+      color: #ff3366 !important;
+      text-shadow: 0 0 25px var(--neon-red-glow), 0 0 50px var(--neon-red) !important;
+      animation: redline-shake 0.12s infinite alternate;
+    }
+    .redline-active .hud-unit {
+      color: var(--neon-red) !important;
+      text-shadow: 0 0 15px var(--neon-red);
+    }
+
+    @keyframes redline-shake {
+      0% { transform: translateY(-1px); }
+      100% { transform: translateY(1px); }
+    }
+
+    /* CENTER DISPLAY: CAR CHASSIS */
+    .center-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 520px;
+      padding: 16px;
+      position: relative;
+    }
+
+    .chassis-header-info {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-light);
+      padding-bottom: 10px;
+      margin-bottom: 8px;
+      gap: 12px;
+    }
+
+    .ecu-active-count {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--neon-green);
+    }
+
+    /* Car Simulation Container */
+    .vehicle-display-box {
+      width: 100%;
+      height: 340px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .car-svg-container {
+      width: 220px;
+      height: 330px;
+      position: relative;
+      filter: drop-shadow(0 15px 30px rgba(0, 0, 0, 0.8));
+    }
+
+    /* Active Front Wheels Steering Transform */
+    .wheel-front-left, .wheel-front-right {
+      transform-origin: center center;
+      transition: transform 0.04s cubic-bezier(0.1, 0.9, 0.2, 1);
+    }
+
+    /* Rear Brake Lamps Glow */
+    .brake-lightbar {
+      transition: all 0.08s ease-out;
+      opacity: 0.25;
+      filter: drop-shadow(0 0 3px #ff2a5f);
+    }
+
+    .brake-engaged .brake-lightbar {
+      opacity: 1 !important;
+      filter: drop-shadow(0 0 20px #ff2a5f) drop-shadow(0 0 40px #ff2a5f) drop-shadow(0 0 60px rgba(255, 42, 95, 0.8)) !important;
+      fill: #ff2a5f !important;
+    }
+
+    .brake-engaged .car-rear-ambient {
+      opacity: 0.85 !important;
+      transform: scaleY(1.3);
+    }
+
+    .car-rear-ambient {
+      position: absolute;
+      bottom: -15px;
+      left: 10%;
+      width: 80%;
+      height: 50px;
+      background: radial-gradient(ellipse at bottom, rgba(255, 42, 95, 0.8), transparent 70%);
+      opacity: 0;
+      transition: opacity 0.12s ease-out, transform 0.12s ease-out;
+      pointer-events: none;
+      filter: blur(8px);
+    }
+
+    /* Real-time Steering Angle HUD Badge */
+    .steering-badge {
+      background: rgba(12, 18, 28, 0.85);
+      border: 1px solid var(--border-cyan);
+      padding: 4px 16px;
+      border-radius: 20px;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--neon-cyan);
+      box-shadow: 0 0 15px rgba(53, 224, 201, 0.25);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      white-space: nowrap;
+    }
+
+    .steer-indicator-arrows {
+      display: flex;
+      gap: 4px;
+      font-size: 0.9rem;
+    }
+    .steer-left-active {
+      color: var(--neon-cyan);
+      text-shadow: 0 0 8px var(--neon-cyan);
+      animation: chevron-pulse 0.5s infinite alternate;
+    }
+    .steer-right-active {
+      color: var(--neon-cyan);
+      text-shadow: 0 0 8px var(--neon-cyan);
+      animation: chevron-pulse 0.5s infinite alternate;
+    }
+
+    @keyframes chevron-pulse {
+      0% { opacity: 0.4; transform: scale(0.9); }
+      100% { opacity: 1; transform: scale(1.15); }
+    }
+
+    /* Brake Pressure Gauge Indicator below car */
+    .brake-pressure-widget {
+      width: 90%;
+      margin: 10px 0;
+      background: rgba(10, 15, 22, 0.6);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .brake-label-group {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .brake-label-text {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      letter-spacing: 1px;
+    }
+
+    .brake-status-text {
+      font-family: var(--font-display);
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--neon-green);
+    }
+    .brake-engaged .brake-status-text {
+      color: var(--neon-red);
+      text-shadow: 0 0 10px var(--neon-red);
+    }
+
+    .brake-meter-bar {
+      flex: 1;
+      height: 10px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 5px;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .brake-meter-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--neon-red-light), var(--neon-red));
+      border-radius: 5px;
+      box-shadow: 0 0 12px var(--neon-red);
+      transition: width 0.06s ease-out;
+    }
+
+    /* ==========================================================================
+       HOLOGRAPHIC TRANSMISSION SELECTOR: [ P ] [ R ] [ N ] ◄[ D ]►
+       ========================================================================== */
+    .transmission-selector {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      background: rgba(8, 12, 18, 0.7);
+      border-radius: 12px;
+      border: 1px solid var(--border-light);
+      margin-top: 6px;
+    }
+
+    .gear-item {
+      font-family: var(--font-display);
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: var(--text-dim);
+      padding: 6px 14px;
+      border-radius: 6px;
+      transition: all 0.25s cubic-bezier(0.1, 0.9, 0.2, 1);
+      position: relative;
+      border: 1px solid transparent;
+    }
+
+    .gear-item.active {
+      color: #ffffff;
+      background: linear-gradient(135deg, rgba(53, 224, 201, 0.22), rgba(28, 157, 140, 0.35));
+      border: 1px solid var(--neon-cyan);
+      box-shadow: 
+        0 0 18px rgba(53, 224, 201, 0.45),
+        inset 0 0 10px rgba(53, 224, 201, 0.25);
+      text-shadow: 0 0 12px var(--neon-cyan);
+      transform: scale(1.06);
+    }
+
+    .gear-drive-tag {
+      font-size: 0.85rem;
+      margin-left: 2px;
+      color: var(--neon-cyan);
+    }
+
+    /* ==========================================================================
+       LOWER TELEMETRY FOOTER (FITTED TO SCREEN)
+       ========================================================================== */
+    .telemetry-footer {
+      max-width: 1700px;
+      margin: 0 auto 20px auto;
+      padding: 0 28px;
+      width: 100%;
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 20px;
+    }
+
+    .bus-load-card {
+      background: var(--bg-surface);
+      backdrop-filter: blur(16px);
+      border-radius: 16px;
+      border: 1px solid var(--border-cyan);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+    }
+
+    .bus-card-title {
+      font-family: var(--font-display);
+      font-size: 0.95rem;
+      font-weight: 700;
+      letter-spacing: 1.8px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .bus-load-large {
+      font-family: var(--font-display);
+      font-size: 3.2rem;
+      font-weight: 900;
+      color: var(--neon-green);
+      line-height: 1;
+      text-shadow: 0 0 20px var(--neon-green-glow);
+      margin: 4px 0;
+    }
+
+    .bus-load-meta {
+      font-family: var(--font-mono);
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+    .bus-load-meta span {
+      color: var(--neon-cyan);
+      font-weight: bold;
+    }
+
+    .bus-bar-container {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+      margin: 6px 0;
+      overflow: hidden;
+    }
+
+    .bus-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--neon-green), var(--neon-cyan));
+      border-radius: 4px;
+      box-shadow: 0 0 10px var(--neon-green);
+      transition: width 0.3s ease;
+    }
+
+    .ecu-grid {
+      background: var(--bg-surface);
+      backdrop-filter: blur(16px);
+      border-radius: 16px;
+      border: 1px solid var(--border-cyan);
+      padding: 18px;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 12px;
+    }
+
+    .ecu-node-card {
+      background: rgba(14, 20, 32, 0.75);
+      border: 1px solid var(--border-light);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    .ecu-node-card:hover {
+      border-color: var(--neon-cyan);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+    }
+
+    .node-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2px;
+    }
+
+    .node-id {
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      font-weight: 800;
+      color: var(--neon-cyan);
+    }
+
+    .node-status-led {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--neon-green);
+      box-shadow: 0 0 8px var(--neon-green);
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+
+    .node-status-led.off {
+      background: #556275 !important;
+      box-shadow: none !important;
+    }
+
+    .node-name {
+      font-family: var(--font-tech);
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .node-value {
+      font-family: var(--font-mono);
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: #ffffff;
+      margin: 3px 0;
+      text-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+    }
+
+    .node-footer {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding-top: 3px;
+    }
+
+    .counter-tag {
+      color: var(--neon-cyan);
+      font-weight: bold;
+    }
+
+    @media (max-width: 1200px) {
+      .dash-stage { grid-template-columns: 1fr; }
+      .telemetry-footer { grid-template-columns: 1fr; }
+      .ecu-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- TOP HEADER -->
+  <header class="dash-header">
+    <div class="brand-section">
+      <svg class="brand-logo" viewBox="0 0 100 100" fill="none">
+        <polygon points="50,5 92,25 92,68 50,95 8,68 8,25" stroke="#35e0c9" stroke-width="4" fill="rgba(53,224,201,0.06)"/>
+        <path d="M50,22 L72,35 L50,82 L28,35 Z" fill="url(#brandGrad)" />
+        <defs>
+          <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#62d1cf"/>
+            <stop offset="50%" stop-color="#35e0c9"/>
+            <stop offset="100%" stop-color="#1c9d8c"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <div>
+        <div class="brand-title">CAN-SENTINEL // EV TELEMETRY</div>
+        <div class="brand-subtitle">CAN-Sentinel EV Telemetry</div>
+      </div>
+    </div>
+
+    <!-- Center Drive Mode Selector -->
+    <div class="header-center-info">
+      <div class="mode-pill-group">
+        <div class="mode-pill" onclick="setDriveMode('RANGE')">RANGE</div>
+        <div class="mode-pill" onclick="setDriveMode('NORMAL')">NORMAL</div>
+        <div class="mode-pill active" onclick="setDriveMode('SPORT+')">SPORT+</div>
+      </div>
+    </div>
+
+    <!-- Right Controls -->
+    <div class="header-controls">
+      <div id="conn-badge" class="status-badge error">
+        <div class="pulse-dot"></div>
+        <span id="conn-text">CAN BUS: CONNECTING...</span>
+      </div>
+
+      <!-- EV Sound Toggle (Icon Only) -->
+      <button id="btn-audio" class="ctrl-btn" onclick="toggleAudio()" title="Toggle Synthesized EV Motor Audio" aria-label="Toggle Sound">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+        </svg>
+      </button>
+
+      <!-- Sim Engine Toggle (Icon Only) -->
+      <button id="btn-sim" class="ctrl-btn" onclick="toggleDemoMode()" title="Toggle Local Physics Simulation Engine" aria-label="Toggle Sim Engine">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="4" width="16" height="16" rx="2"/>
+          <rect x="9" y="9" width="6" height="6"/>
+          <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>
+        </svg>
+      </button>
+
+      <!-- Fullscreen Toggle (Icon Only) -->
+      <button class="ctrl-btn" onclick="toggleFullscreen()" title="Fullscreen Mode" aria-label="Toggle Fullscreen">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN CLUSTER INSTRUMENTS -->
+  <main class="dash-stage">
+
+    <!-- LEFT CLUSTER: SPEEDOMETER (0–140 km/h) -->
+    <section class="instrument-card radial-gauge-wrapper">
+      <svg class="gauge-svg" viewBox="0 0 400 400">
+        <defs>
+          <linearGradient id="speedArcGrad" x1="0%" y1="20%" x2="80%" y2="80%">
+            <stop offset="0%" stop-color="#0284c7"/>
+            <stop offset="30%" stop-color="#1c9d8c"/>
+            <stop offset="60%" stop-color="#35e0c9"/>
+            <stop offset="85%" stop-color="#62d1cf"/>
+            <stop offset="100%" stop-color="#00ff9d"/>
+          </linearGradient>
+          <filter id="cyanGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="6" result="blur"/>
+            <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+          </filter>
+        </defs>
+
+        <path id="speed-track-bg" fill="none" stroke="rgba(53, 224, 201, 0.12)" stroke-width="12" stroke-linecap="round"/>
+        <path id="speed-progress-arc" fill="none" stroke="url(#speedArcGrad)" stroke-width="12" stroke-linecap="round" filter="url(#cyanGlow)"/>
+
+        <g id="speed-ticks-group"></g>
+
+        <!-- Sweeping Luminous Needle -->
+        <g id="speed-needle-group" transform="rotate(-60 200 200)">
+          <polygon points="196,200 204,200 201,55 199,55" fill="rgba(53,224,201,0.25)" filter="url(#cyanGlow)"/>
+          <polygon points="198,200 202,200 200.8,50 199.2,50" fill="#35e0c9"/>
+          <line x1="200" y1="200" x2="200" y2="48" stroke="#35e0c9" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="200" cy="48" r="4.5" fill="#ffffff" filter="url(#cyanGlow)"/>
+          <circle cx="200" cy="200" r="18" fill="#040b12" stroke="#35e0c9" stroke-width="2"/>
+          <circle cx="200" cy="200" r="7" fill="#35e0c9"/>
+        </g>
+      </svg>
+
+      <div class="gauge-center-hud">
+        <div class="hud-label">ROAD SPEED</div>
+        <div id="hud-speed-val" class="hud-value-large">0</div>
+        <div class="hud-unit">KM / H</div>
+        <div class="hud-sub-details">
+          <div class="sub-tag"><span id="hud-mph-val">0</span> MPH</div>
+          <div class="sub-tag">G: <span id="hud-g-force">+0.00</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CENTER CLUSTER: CAR CHASSIS -->
+    <section class="instrument-card center-stage" id="center-car-card">
+      <div class="chassis-header-info">
+        <div style="font-family: var(--font-display); font-size: 0.8rem; letter-spacing: 2px; color: var(--text-muted); white-space: nowrap;">
+          DYNAMIC CHASSIS CONTROL
+        </div>
+
+        <!-- Real-time Steering Angle Overlay Badge -->
+        <div class="steering-badge" id="steering-badge">
+          <div class="steer-indicator-arrows">
+            <span id="steer-arr-l">&#9668;</span>
+          </div>
+          <span id="steer-angle-text">STEERING: 0.0&deg;</span>
+          <div class="steer-indicator-arrows">
+            <span id="steer-arr-r">&#9658;</span>
+          </div>
+        </div>
+
+        <div class="ecu-active-count" style="white-space: nowrap;">CAN 2.0A // 6 ECUs SYNCED</div>
+      </div>
+
+      <!-- Vehicle SVG Display Box -->
+      <div class="vehicle-display-box">
+        <div class="car-rear-ambient"></div>
+        <svg class="car-svg-container" viewBox="0 0 240 360" fill="none">
+          <defs>
+            <!-- Car body metallic gradient -->
+            <linearGradient id="bodyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#141c2b"/>
+              <stop offset="50%" stop-color="#1b283d"/>
+              <stop offset="100%" stop-color="#0c1320"/>
+            </linearGradient>
+            <!-- Carbon canopy tint -->
+            <linearGradient id="canopyGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="#080e18"/>
+              <stop offset="50%" stop-color="#111c2e"/>
+              <stop offset="100%" stop-color="#05080f"/>
+            </linearGradient>
+            <!-- Glowing cyan neon headlight glow -->
+            <filter id="headlightGlow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="8" result="blur"/>
+              <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+            </filter>
+          </defs>
+
+          <!-- FRONT WHEELS (PHYSICALLY STEER WITH 0x0B0) -->
+          <!-- Front Left Wheel Assembly: Pivot at (42, 95) -->
+          <g id="wheel-fl-group" class="wheel-front-left" style="transform-origin: 42px 95px;">
+            <rect x="32" y="75" width="20" height="40" rx="6" fill="#18202c" stroke="#35e0c9" stroke-width="1.5"/>
+            <line x1="42" y1="78" x2="42" y2="112" stroke="#35e0c9" stroke-width="2" opacity="0.8"/>
+            <circle cx="42" cy="95" r="3" fill="#ffffff"/>
+          </g>
+
+          <!-- Front Right Wheel Assembly: Pivot at (198, 95) -->
+          <g id="wheel-fr-group" class="wheel-front-right" style="transform-origin: 198px 95px;">
+            <rect x="188" y="75" width="20" height="40" rx="6" fill="#18202c" stroke="#35e0c9" stroke-width="1.5"/>
+            <line x1="198" y1="78" x2="198" y2="112" stroke="#35e0c9" stroke-width="2" opacity="0.8"/>
+            <circle cx="198" cy="95" r="3" fill="#ffffff"/>
+          </g>
+
+          <!-- REAR WHEELS (Fixed Alignment) -->
+          <rect x="30" y="245" width="22" height="44" rx="6" fill="#151b26" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+          <rect x="188" y="245" width="22" height="44" rx="6" fill="#151b26" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>
+
+          <!-- MAIN VEHICLE CHASSIS BODY (Porsche Taycan / Audi e-tron GT Silhouette) -->
+          <path d="M 68,48 
+                   C 78,28 100,20 120,20 
+                   C 140,20 162,28 172,48 
+                   C 185,65 190,95 190,130 
+                   C 192,175 195,210 196,250 
+                   C 198,285 186,315 174,330 
+                   C 160,342 140,345 120,345 
+                   C 100,345 80,342 66,330 
+                   C 54,315 42,285 44,250 
+                   C 45,210 48,175 50,130 
+                   C 50,95 55,65 68,48 Z" 
+                fill="url(#bodyGradient)" stroke="#35e0c9" stroke-width="1.5" stroke-opacity="0.6"/>
+
+          <!-- Front Aero Splitter & Taycan Matrix LED Headlamps -->
+          <path d="M 72,40 L 95,30 L 145,30 L 168,40" stroke="#35e0c9" stroke-width="2" fill="none" opacity="0.8"/>
+          <!-- Left Matrix Headlight Cluster -->
+          <polygon points="68,52 88,44 85,58 68,64" fill="#35e0c9" opacity="0.9" filter="url(#headlightGlow)"/>
+          <!-- Right Matrix Headlight Cluster -->
+          <polygon points="172,52 152,44 155,58 172,64" fill="#35e0c9" opacity="0.9" filter="url(#headlightGlow)"/>
+
+          <!-- Aerodynamic Hood Creases -->
+          <path d="M 86,52 Q 100,95 98,125" stroke="rgba(53,224,201,0.3)" stroke-width="1.5" fill="none"/>
+          <path d="M 154,52 Q 140,95 142,125" stroke="rgba(53,224,201,0.3)" stroke-width="1.5" fill="none"/>
+
+          <!-- Panoramic Cabin Glass Canopy -->
+          <path d="M 80,125 
+                   C 90,118 110,115 120,115 
+                   C 130,115 150,118 160,125 
+                   C 168,145 170,185 168,230 
+                   C 166,252 154,265 120,265 
+                   C 86,265 74,252 72,230 
+                   C 70,185 72,145 80,125 Z" 
+                fill="url(#canopyGradient)" stroke="rgba(53,224,201,0.4)" stroke-width="1.2"/>
+
+          <!-- EV Battery Pack Core Graphic inside cabin -->
+          <rect x="94" y="150" width="52" height="75" rx="5" fill="rgba(53,224,201,0.1)" stroke="#35e0c9" stroke-width="1"/>
+          <line x1="94" y1="175" x2="146" y2="175" stroke="#35e0c9" stroke-width="1" stroke-dasharray="3 3"/>
+          <line x1="94" y1="200" x2="146" y2="200" stroke="#35e0c9" stroke-width="1" stroke-dasharray="3 3"/>
+
+          <!-- REAR SPOILER & LIGHTBAR (ILLUMINATES VIVID NEON RED WITH 0x0A0 BRAKE) -->
+          <!-- Full-width Tail Lightbar Base -->
+          <path d="M 64,324 C 80,332 105,336 120,336 C 135,336 160,332 176,324" 
+                stroke="#3a0c16" stroke-width="5" stroke-linecap="round" fill="none"/>
+          <!-- Active Neon Red LED Lightbar -->
+          <path id="car-brake-bar" class="brake-lightbar" 
+                d="M 64,324 C 80,332 105,336 120,336 C 135,336 160,332 176,324" 
+                stroke="#ff2a5f" stroke-width="5" stroke-linecap="round" fill="none"/>
+
+          <!-- Dual 3D Rear Cluster Blocks -->
+          <rect id="brake-lamp-l" class="brake-lightbar" x="58" y="316" width="16" height="8" rx="2" fill="#ff2a5f"/>
+          <rect id="brake-lamp-r" class="brake-lightbar" x="166" y="316" width="16" height="8" rx="2" fill="#ff2a5f"/>
+        </svg>
+      </div>
+
+      <!-- Hydraulic Brake Pressure Widget -->
+      <div class="brake-pressure-widget">
+        <div class="brake-label-group">
+          <div class="brake-label-text">HYDRAULIC BRAKE [0x0A0]</div>
+          <div id="brake-status-text" class="brake-status-text">RELEASED (0%)</div>
+        </div>
+        <div class="brake-meter-bar">
+          <div id="brake-meter-fill" class="brake-meter-fill"></div>
+        </div>
+      </div>
+
+      <!-- HOLOGRAPHIC TRANSMISSION SELECTOR [ P ] [ R ] [ N ] ◄[ D ]► -->
+      <div class="transmission-selector">
+        <div id="gear-p" class="gear-item active">P</div>
+        <div id="gear-r" class="gear-item">R</div>
+        <div id="gear-n" class="gear-item">N</div>
+        <div id="gear-d" class="gear-item">D<span id="gear-sub-num" class="gear-drive-tag">1</span></div>
+      </div>
+    </section>
+
+    <!-- RIGHT CLUSTER: POWER TACHOMETER (0–5000 RPM) -->
+    <section id="tacho-card" class="instrument-card radial-gauge-wrapper">
+      <svg class="gauge-svg" viewBox="0 0 400 400">
+        <defs>
+          <linearGradient id="tachoArcGrad" x1="0%" y1="20%" x2="80%" y2="80%">
+            <stop offset="0%" stop-color="#1c9d8c"/>
+            <stop offset="35%" stop-color="#35e0c9"/>
+            <stop offset="65%" stop-color="#f59e0b"/>
+            <stop offset="82%" stop-color="#fb7185"/>
+            <stop offset="100%" stop-color="#ff2a5f"/>
+          </linearGradient>
+          <filter id="tachoGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="6" result="blur"/>
+            <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+          </filter>
+          <filter id="redGlow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="8" result="blur"/>
+            <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+          </filter>
+        </defs>
+
+        <path id="tacho-track-bg" fill="none" stroke="rgba(53, 224, 201, 0.10)" stroke-width="12" stroke-linecap="round"/>
+        <path id="tacho-redline-track" fill="none" stroke="rgba(255, 42, 95, 0.35)" stroke-width="12" stroke-linecap="round"/>
+        <path id="tacho-progress-arc" fill="none" stroke="url(#tachoArcGrad)" stroke-width="12" stroke-linecap="round" filter="url(#tachoGlow)"/>
+
+        <g id="tacho-ticks-group"></g>
+
+        <!-- Sweeping Luminous Tachometer Needle -->
+        <g id="tacho-needle-group" transform="rotate(-60 200 200)">
+          <polygon points="196,200 204,200 201,55 199,55" fill="rgba(255,42,95,0.3)" filter="url(#redGlow)"/>
+          <polygon points="198,200 202,200 200.8,50 199.2,50" fill="#ff2a5f"/>
+          <line x1="200" y1="200" x2="200" y2="48" stroke="#ff2a5f" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="200" cy="48" r="4.5" fill="#ffffff" filter="url(#redGlow)"/>
+          <circle cx="200" cy="200" r="18" fill="#040b12" stroke="#ff2a5f" stroke-width="2"/>
+          <circle cx="200" cy="200" r="7" fill="#ff2a5f"/>
+        </g>
+      </svg>
+
+      <div class="gauge-center-hud">
+        <div class="hud-label">POWERTRAIN MOTOR</div>
+        <div id="hud-rpm-val" class="hud-value-large">0</div>
+        <div id="hud-rpm-unit" class="hud-unit">RPM</div>
+        <div class="hud-sub-details">
+          <div class="sub-tag">PWR: <span id="hud-power-kw">0 kW</span></div>
+          <div class="sub-tag">COOLANT: <span id="hud-coolant-temp">--</span></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- LOWER TELEMETRY BAR -->
+  <footer class="telemetry-footer">
+    <div class="bus-load-card">
+      <div class="bus-card-title">
+        <span>PHYSICAL BUS LOAD</span>
+        <span id="bus-health-badge" style="color: var(--neon-red);">● OFFLINE</span>
+      </div>
+      <div id="bus-load-val" class="bus-load-large">0.0%</div>
+      <div class="bus-bar-container">
+        <div id="bus-load-bar" class="bus-bar-fill"></div>
+      </div>
+      <div class="bus-load-meta">
+        <div>RATE: <span id="bus-fps-val">0.0</span> FRAMES / SEC</div>
+        <div>TOTAL: <span id="bus-total-frames">0</span> FRAMES</div>
+        <div>BUS: <span>500 kbps CAN 2.0A</span> (128 bits/frame)</div>
+      </div>
+    </div>
+
+    <!-- 6 ECU GRID -->
+    <div class="ecu-grid">
+      <div id="ecu-0x0A0" class="ecu-node-card">
+        <div class="node-header"><span class="node-id">0x0A0</span><span class="node-status-led off"></span></div>
+        <div class="node-name">Brake Controller</div>
+        <div id="val-0x0A0" class="node-value">--</div>
+        <div class="node-footer"><span>20ms / 50Hz</span><span class="counter-tag">#<span id="cnt-0x0A0">0</span></span></div>
+      </div>
+
+      <div id="ecu-0x0B0" class="ecu-node-card">
+        <div class="node-header"><span class="node-id">0x0B0</span><span class="node-status-led off"></span></div>
+        <div class="node-name">Steering Gateway</div>
+        <div id="val-0x0B0" class="node-value">--</div>
+        <div class="node-footer"><span>10ms / 100Hz</span><span class="counter-tag">#<span id="cnt-0x0B0">0</span></span></div>
+      </div>
+
+      <div id="ecu-0x100" class="ecu-node-card">
+        <div class="node-header"><span class="node-id">0x100</span><span class="node-status-led off"></span></div>
+        <div class="node-name">Powertrain ECM</div>
+        <div id="val-0x100" class="node-value">--</div>
+        <div class="node-footer"><span>10ms / 100Hz</span><span class="counter-tag">#<span id="cnt-0x100">0</span></span></div>
+      </div>
+
+      <div id="ecu-0x200" class="ecu-node-card">
+        <div class="node-header"><span class="node-id">0x200</span><span class="node-status-led off"></span></div>
+        <div class="node-name">Speed Sensor</div>
+        <div id="val-0x200" class="node-value">--</div>
+        <div class="node-footer"><span>20ms / 50Hz</span><span class="counter-tag">#<span id="cnt-0x200">0</span></span></div>
+      </div>
+
+      <div id="ecu-0x300" class="ecu-node-card">
+        <div class="node-header"><span class="node-id">0x300</span><span class="node-status-led off"></span></div>
+        <div class="node-name">Cooling & Thermal</div>
+        <div id="val-0x300" class="node-value">--</div>
+        <div class="node-footer"><span>100ms / 10Hz</span><span class="counter-tag">#<span id="cnt-0x300">0</span></span></div>
+      </div>
+
+      <div id="ecu-0x600" class="ecu-node-card">
+        <div class="node-header"><span class="node-id">0x600</span><span class="node-status-led off"></span></div>
+        <div class="node-name">Infotainment GW</div>
+        <div id="val-0x600" class="node-value">--</div>
+        <div class="node-footer"><span>100ms / 10Hz</span><span class="counter-tag">#<span id="cnt-0x600">0</span></span></div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- SCRIPT -->
+  <script>
+    const state = {
+      // Targets
+      targetSpeed: 0,
+      targetRpm: 0,
+      targetSteer: 0,
+      targetBrakePress: 0,
+      targetBrakeSwitch: 0,
+      targetCoolant: 0,
+      infotainment: 0,
+      gear: "P",
+      gearNum: 0,
+      driveMode: "SPORT+",
+
+      // Current smoothed display values
+      currentSpeed: 0,
+      currentRpm: 0,
+      currentSteer: 0,
+      currentBrakePress: 0,
+      currentCoolant: 0,
+
+      // Bus metrics
+      totalFrames: 0,
+      busFps: 0.0,
+      busLoadPct: 0.0,
+      lastWsMsgTime: 0,
+      isOnline: false,
+
+      // Controls
+      demoMode: false,
+      audioActive: false,
+      demoTime: 0
+    };
+
+    const GAUGE_CONFIG = {
+      startAngle: -150,
+      endAngle: 90,
+      sweep: 240,
+      radius: 160
+    };
+
+    function polarToCartesian(cx, cy, r, angleInDegrees) {
+      const angleInRadians = (angleInDegrees * Math.PI) / 180.0;
+      return {
+        x: cx + (r * Math.cos(angleInRadians)),
+        y: cy + (r * Math.sin(angleInRadians))
+      };
+    }
+
+    function describeArc(cx, cy, r, startAngle, endAngle) {
+      if (endAngle <= startAngle + 0.05) return "";
+      const start = polarToCartesian(cx, cy, r, startAngle);
+      const end = polarToCartesian(cx, cy, r, endAngle);
+      const largeArcFlag = (endAngle - startAngle <= 180) ? "0" : "1";
+      return `M ${start.x} ${start.y} A ${r} ${r} 0 ${largeArcFlag} 1 ${end.x} ${end.y}`;
+    }
+
+    function initializeGauges() {
+      const speedGroup = document.getElementById("speed-ticks-group");
+      const tachoGroup = document.getElementById("tacho-ticks-group");
+      const cx = 200, cy = 200, rOuter = 152, rInnerMajor = 136, rInnerMinor = 142, rText = 118;
+
+      // 1. Static track backgrounds
+      document.getElementById("speed-track-bg").setAttribute("d", describeArc(cx, cy, GAUGE_CONFIG.radius, GAUGE_CONFIG.startAngle, GAUGE_CONFIG.endAngle));
+      document.getElementById("tacho-track-bg").setAttribute("d", describeArc(cx, cy, GAUGE_CONFIG.radius, GAUGE_CONFIG.startAngle, GAUGE_CONFIG.endAngle));
+      const redlineStartDeg = GAUGE_CONFIG.startAngle + (3800 / 5000) * GAUGE_CONFIG.sweep;
+      document.getElementById("tacho-redline-track").setAttribute("d", describeArc(cx, cy, GAUGE_CONFIG.radius, redlineStartDeg, GAUGE_CONFIG.endAngle));
+
+      // 2. Speedometer Ticks (0 to 140 km/h)
+      for (let speed = 0; speed <= 140; speed += 5) {
+        const fraction = speed / 140;
+        const angleDeg = GAUGE_CONFIG.startAngle + fraction * GAUGE_CONFIG.sweep;
+        const isMajor = (speed % 20 === 0);
+        const rIn = isMajor ? rInnerMajor : rInnerMinor;
+
+        const p1 = polarToCartesian(cx, cy, rOuter, angleDeg);
+        const p2 = polarToCartesian(cx, cy, rIn, angleDeg);
+
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", p1.x); line.setAttribute("y1", p1.y);
+        line.setAttribute("x2", p2.x); line.setAttribute("y2", p2.y);
+        line.setAttribute("stroke", isMajor ? "#35e0c9" : "rgba(53, 224, 201, 0.25)");
+        line.setAttribute("stroke-width", isMajor ? "2.5" : "1.2");
+        speedGroup.appendChild(line);
+
+        if (isMajor) {
+          const pt = polarToCartesian(cx, cy, rText, angleDeg);
+          const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          text.setAttribute("x", pt.x);
+          text.setAttribute("y", pt.y + 6);
+          text.setAttribute("text-anchor", "middle");
+          text.setAttribute("fill", "#f0fdfa");
+          text.setAttribute("font-size", "14");
+          text.setAttribute("font-family", "Outfit, sans-serif");
+          text.setAttribute("font-weight", "700");
+          text.textContent = speed;
+          speedGroup.appendChild(text);
+        }
+      }
+
+      // 3. Tachometer Ticks (0 to 5000 RPM)
+      for (let rpm = 0; rpm <= 5000; rpm += 250) {
+        const fraction = rpm / 5000;
+        const angleDeg = GAUGE_CONFIG.startAngle + fraction * GAUGE_CONFIG.sweep;
+        const isMajor = (rpm % 1000 === 0);
+        const isRedline = (rpm >= 3800);
+        const isBoost = (rpm >= 3000 && rpm < 3800);
+        const rIn = isMajor ? rInnerMajor : rInnerMinor;
+
+        const p1 = polarToCartesian(cx, cy, rOuter, angleDeg);
+        const p2 = polarToCartesian(cx, cy, rIn, angleDeg);
+
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", p1.x); line.setAttribute("y1", p1.y);
+        line.setAttribute("x2", p2.x); line.setAttribute("y2", p2.y);
+        const strokeColor = isRedline ? "#ff2a5f" : (isBoost ? "#f59e0b" : (isMajor ? "#35e0c9" : "rgba(53, 224, 201, 0.22)"));
+        line.setAttribute("stroke", strokeColor);
+        line.setAttribute("stroke-width", (isMajor || isRedline) ? "2.5" : "1.2");
+        tachoGroup.appendChild(line);
+
+        if (isMajor) {
+          const pt = polarToCartesian(cx, cy, rText, angleDeg);
+          const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          text.setAttribute("x", pt.x);
+          text.setAttribute("y", pt.y + 6);
+          text.setAttribute("text-anchor", "middle");
+          const textColor = isRedline ? "#ff2a5f" : (isBoost ? "#fbbf24" : "#f0fdfa");
+          text.setAttribute("fill", textColor);
+          text.setAttribute("font-size", "15");
+          text.setAttribute("font-family", "Outfit, sans-serif");
+          text.setAttribute("font-weight", "800");
+          text.textContent = rpm / 1000;
+          tachoGroup.appendChild(text);
+        }
+      }
+    }
+
+    /* Web Audio Synthesizer */
+    let audioCtx = null, motorOsc = null, harmonicOsc = null, gainNode = null;
+    function initAudio() {
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+        motorOsc = audioCtx.createOscillator();
+        harmonicOsc = audioCtx.createOscillator();
+        gainNode = audioCtx.createGain();
+        motorOsc.type = "sawtooth";
+        harmonicOsc.type = "sine";
+        motorOsc.frequency.setValueAtTime(60, audioCtx.currentTime);
+        harmonicOsc.frequency.setValueAtTime(120, audioCtx.currentTime);
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(450, audioCtx.currentTime);
+        motorOsc.connect(filter);
+        harmonicOsc.connect(filter);
+        filter.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        gainNode.gain.setValueAtTime(0.00001, audioCtx.currentTime);
+        motorOsc.start();
+        harmonicOsc.start();
+      } catch (e) {}
+    }
+
+    function toggleAudio() {
+      state.audioActive = !state.audioActive;
+      document.getElementById("btn-audio").classList.toggle("active", state.audioActive);
+      if (state.audioActive) {
+        if (!audioCtx) initAudio();
+        if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+      } else if (gainNode && audioCtx) {
+        gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+      }
+    }
+
+    function updateAudioSynth(speed, rpm) {
+      if (!audioCtx || !gainNode) return;
+      // Immediately cancel and mute to dead silence if muted, offline, stopped, or bus idle!
+      if (!state.audioActive || !state.isOnline || (speed < 0.5 && rpm < 50) || state.busFps < 0.5) {
+        gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+        return;
+      }
+      const baseFreq = 50 + (rpm / 4000) * 280 + (speed / 130) * 120;
+      motorOsc.frequency.setTargetAtTime(baseFreq, audioCtx.currentTime, 0.05);
+      harmonicOsc.frequency.setTargetAtTime(baseFreq * 1.5, audioCtx.currentTime, 0.05);
+      const targetVol = Math.min(0.08, 0.01 + (speed / 130) * 0.06 + (rpm / 4000) * 0.03);
+      gainNode.gain.setTargetAtTime(targetVol, audioCtx.currentTime, 0.05);
+    }
+
+    /* WebSocket Connection */
+    let ws = null;
+    function connectWebSocket() {
+      const protocol = (window.location.protocol === "https:") ? "wss:" : "ws:";
+      const host = window.location.host || "localhost:8080";
+      const wsUrl = `${protocol}//${host}/ws`;
+      const badge = document.getElementById("conn-badge");
+      const badgeText = document.getElementById("conn-text");
+
+      try {
+        ws = new WebSocket(wsUrl);
+        ws.onopen = () => {
+          state.isOnline = true;
+          badge.classList.remove("error");
+          badgeText.textContent = "SOCKETCAN vcan0: CONNECTED (60 FPS)";
+          document.getElementById("bus-health-badge").textContent = "● OPTIMAL";
+          document.getElementById("bus-health-badge").style.color = "var(--neon-green)";
+          document.querySelectorAll(".node-status-led").forEach(led => led.classList.remove("off"));
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === "telemetry") {
+              state.lastWsMsgTime = performance.now();
+
+              // Check if bus is inactive or simulator stopped
+              if (data.is_active === false || data.bus_stats?.status === "OFFLINE" || (data.bus_stats?.fps === 0 && data.speed === 0)) {
+                handleDisconnect();
+                return;
+              }
+
+              state.isOnline = true;
+              badge.classList.remove("error");
+              badgeText.textContent = "SOCKETCAN vcan0: CONNECTED (60 FPS)";
+              document.getElementById("bus-health-badge").textContent = "● OPTIMAL";
+              document.getElementById("bus-health-badge").style.color = "var(--neon-green)";
+              document.querySelectorAll(".node-status-led").forEach(led => led.classList.remove("off"));
+
+              state.targetSpeed = data.speed;
+              state.targetRpm = data.rpm;
+              state.targetSteer = data.steering_angle;
+              state.targetBrakePress = data.brake_pressure;
+              state.targetBrakeSwitch = data.brake_switch;
+              state.targetCoolant = data.coolant_temp;
+              state.infotainment = data.infotainment;
+              state.gear = data.gear;
+              state.gearNum = data.gear_num;
+              state.driveMode = data.drive_mode || state.driveMode;
+
+              if (data.bus_stats) {
+                state.busFps = data.bus_stats.fps;
+                state.busLoadPct = data.bus_stats.bus_load_pct;
+                state.totalFrames = data.bus_stats.total_frames;
+              }
+
+              if (data.ecus) {
+                updateECUCard("0x0A0", data.ecus["0x0A0"]);
+                updateECUCard("0x0B0", data.ecus["0x0B0"]);
+                updateECUCard("0x100", data.ecus["0x100"]);
+                updateECUCard("0x200", data.ecus["0x200"]);
+                updateECUCard("0x300", data.ecus["0x300"]);
+                updateECUCard("0x600", data.ecus["0x600"]);
+              }
+            }
+          } catch (err) {}
+        };
+
+        ws.onclose = () => {
+          handleDisconnect();
+          setTimeout(connectWebSocket, 1500);
+        };
+        ws.onerror = () => ws.close();
+      } catch (e) {
+        handleDisconnect();
+        setTimeout(connectWebSocket, 3000);
+      }
+    }
+
+    /* Drop all signals, dials, and sound to zero when offline/not working */
+    function handleDisconnect() {
+      state.isOnline = false;
+      const badge = document.getElementById("conn-badge");
+      const badgeText = document.getElementById("conn-text");
+      badge.classList.add("error");
+      badgeText.textContent = "CAN BUS: OFFLINE / DISCONNECTED";
+      document.getElementById("bus-health-badge").textContent = "● OFFLINE";
+      document.getElementById("bus-health-badge").style.color = "var(--neon-red)";
+
+      // Drop all targets to zero!
+      if (!state.demoMode) {
+        state.targetSpeed = 0;
+        state.targetRpm = 0;
+        state.targetSteer = 0;
+        state.targetBrakePress = 0;
+        state.targetBrakeSwitch = 0;
+        state.targetCoolant = 0;
+        state.gear = "P";
+        state.busFps = 0.0;
+        state.busLoadPct = 0.0;
+
+        document.querySelectorAll(".node-status-led").forEach(led => led.classList.add("off"));
+        ["0x0A0","0x0B0","0x100","0x200","0x300","0x600"].forEach(id => {
+          const valEl = document.getElementById(`val-${id}`);
+          if (valEl) valEl.textContent = "--";
+        });
+      }
+
+      // Immediately cancel and mute audio to dead zero!
+      if (gainNode && audioCtx) {
+        gainNode.gain.cancelScheduledValues(audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+      }
+    }
+
+    function updateECUCard(id, data) {
+      if (!data) return;
+      const valEl = document.getElementById(`val-${id}`);
+      const cntEl = document.getElementById(`cnt-${id}`);
+      if (valEl) valEl.textContent = data.value || "--";
+      if (cntEl) cntEl.textContent = data.counter !== undefined ? data.counter : "0";
+    }
+
+    function setDriveMode(mode) {
+      state.driveMode = mode;
+      document.querySelectorAll(".mode-pill").forEach(pill => {
+        pill.classList.toggle("active", pill.textContent.trim() === mode);
+      });
+    }
+
+    function toggleDemoMode() {
+      state.demoMode = !state.demoMode;
+      const btn = document.getElementById("btn-sim");
+      btn.classList.toggle("active", state.demoMode);
+      if (state.demoMode) {
+        state.isOnline = true;
+        document.getElementById("conn-badge").classList.remove("error");
+        document.getElementById("conn-text").textContent = "SIMULATOR ACTIVE (320 FPS)";
+        document.getElementById("bus-health-badge").textContent = "● SIMULATION";
+        document.getElementById("bus-health-badge").style.color = "var(--neon-green)";
+        document.querySelectorAll(".node-status-led").forEach(led => led.classList.remove("off"));
+      } else {
+        handleDisconnect();
+      }
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        if (document.exitFullscreen) document.exitFullscreen();
+      }
+    }
+
+    /* 60 FPS Smooth Interpolation Loop */
+    let lastFrameTime = performance.now();
+    function renderLoop(now) {
+      requestAnimationFrame(renderLoop);
+      const dt = (now - lastFrameTime) / 1000;
+      lastFrameTime = now;
+
+      // Watchdog: If no WS message received for > 1.8s and not in manual demo mode -> drop to zero!
+      if (!state.demoMode && state.lastWsMsgTime !== 0 && (now - state.lastWsMsgTime > 1800)) {
+        if (state.isOnline) handleDisconnect();
+      }
+
+      // Explicit Demo Mode Physics Generator (ONLY if user clicks SIM ENGINE button)
+      if (state.demoMode) {
+        state.demoTime += dt;
+        const t = state.demoTime;
+        state.targetSpeed = Math.max(0, Math.min(130, 65 + 45 * Math.sin(t * 0.4) + 12 * Math.cos(t * 0.15)));
+        state.targetRpm = Math.max(800, Math.min(4000, 800 + state.targetSpeed * 24 + 120 * Math.sin(t * 2)));
+        state.targetSteer = 30 * Math.sin(t * 0.6) * Math.cos(t * 0.2);
+
+        if (Math.sin(t * 0.4) < -0.6) {
+          state.targetBrakeSwitch = 1;
+          state.targetBrakePress = Math.min(100, Math.floor(Math.abs(Math.sin(t * 0.4)) * 95));
+        } else {
+          state.targetBrakeSwitch = 0;
+          state.targetBrakePress = Math.max(0, state.targetBrakePress - 4);
+        }
+
+        state.targetCoolant = Math.round(90 + (state.targetSpeed / 130) * 8 + Math.sin(t * 0.1) * 2);
+
+        if (state.targetSpeed < 1 && state.targetBrakeSwitch) state.gear = "P";
+        else if (state.targetSpeed < 25) { state.gear = "D1"; state.gearNum = 1; }
+        else if (state.targetSpeed < 50) { state.gear = "D2"; state.gearNum = 2; }
+        else if (state.targetSpeed < 75) { state.gear = "D3"; state.gearNum = 3; }
+        else if (state.targetSpeed < 105) { state.gear = "D4"; state.gearNum = 4; }
+        else { state.gear = "D5"; state.gearNum = 5; }
+
+        state.busFps = 320.0 + (Math.random() * 2 - 1);
+        state.busLoadPct = 8.19 + (Math.random() * 0.1 - 0.05);
+        state.totalFrames += Math.round(320 * dt);
+
+        updateECUCard("0x0A0", { value: `${state.targetBrakePress}% / ${state.targetBrakeSwitch ? 'ENG' : 'REL'}`, counter: Math.floor(t * 50) % 256 });
+        updateECUCard("0x0B0", { value: `${state.targetSteer >= 0 ? '+' : ''}${state.targetSteer.toFixed(1)}°`, counter: Math.floor(t * 100) % 256 });
+        updateECUCard("0x100", { value: `${Math.round(state.targetRpm)} RPM`, counter: Math.floor(t * 100) % 256 });
+        updateECUCard("0x200", { value: `${Math.round(state.targetSpeed)} km/h`, counter: Math.floor(t * 50) % 256 });
+        updateECUCard("0x300", { value: `${state.targetCoolant} °C`, counter: Math.floor(t * 10) % 256 });
+        updateECUCard("0x600", { value: "ACTIVE", counter: Math.floor(t * 10) % 256 });
+      }
+
+      // Smooth Lerp Interpolation
+      const lerpFactor = Math.min(1.0, dt * 14.0);
+      state.currentSpeed += (state.targetSpeed - state.currentSpeed) * lerpFactor;
+      state.currentRpm += (state.targetRpm - state.currentRpm) * lerpFactor;
+      state.currentSteer += (state.targetSteer - state.currentSteer) * lerpFactor;
+      state.currentBrakePress += (state.targetBrakePress - state.currentBrakePress) * lerpFactor;
+      state.currentCoolant += (state.targetCoolant - state.currentCoolant) * lerpFactor;
+
+      // 1. SPEEDOMETER (0–140 km/h)
+      const speedFraction = Math.max(0, Math.min(1, state.currentSpeed / 140));
+      const speedAngle = GAUGE_CONFIG.startAngle + speedFraction * GAUGE_CONFIG.sweep;
+      const speedNeedleRotation = speedAngle + 90;
+      document.getElementById("speed-needle-group").setAttribute("transform", `rotate(${speedNeedleRotation} 200 200)`);
+      document.getElementById("speed-progress-arc").setAttribute("d", describeArc(200, 200, GAUGE_CONFIG.radius, GAUGE_CONFIG.startAngle, speedAngle));
+
+      document.getElementById("hud-speed-val").textContent = Math.round(state.currentSpeed);
+      document.getElementById("hud-mph-val").textContent = Math.round(state.currentSpeed * 0.621371);
+      const gEstimate = ((state.targetSpeed - state.currentSpeed) * 0.05);
+      document.getElementById("hud-g-force").textContent = `${gEstimate >= 0 ? '+' : ''}${gEstimate.toFixed(2)}`;
+
+      // 2. TACHOMETER (0–5000 RPM)
+      const rpmFraction = Math.max(0, Math.min(1, state.currentRpm / 5000));
+      const rpmAngle = GAUGE_CONFIG.startAngle + rpmFraction * GAUGE_CONFIG.sweep;
+      const tachoNeedleRotation = rpmAngle + 90;
+      document.getElementById("tacho-needle-group").setAttribute("transform", `rotate(${tachoNeedleRotation} 200 200)`);
+      document.getElementById("tacho-progress-arc").setAttribute("d", describeArc(200, 200, GAUGE_CONFIG.radius, GAUGE_CONFIG.startAngle, rpmAngle));
+
+      const roundedRpm = Math.round(state.currentRpm);
+      document.getElementById("hud-rpm-val").textContent = roundedRpm;
+      const powerKw = state.currentSpeed > 0.5 ? Math.round((roundedRpm / 4000) * 180 + (state.currentSpeed / 130) * 80) : 0;
+      document.getElementById("hud-power-kw").textContent = `${powerKw} kW`;
+      document.getElementById("hud-coolant-temp").textContent = state.currentCoolant > 10 ? `${Math.round(state.currentCoolant)}°C` : "--";
+      document.getElementById("tacho-card").classList.toggle("redline-active", roundedRpm >= 3800);
+
+      // 3. FRONT WHEEL STEERING (0x0B0)
+      const steerAngleClamped = Math.max(-45, Math.min(45, state.currentSteer));
+      document.getElementById("wheel-fl-group").style.transform = `rotate(${steerAngleClamped}deg)`;
+      document.getElementById("wheel-fr-group").style.transform = `rotate(${steerAngleClamped}deg)`;
+      document.getElementById("steer-angle-text").textContent = `STEERING: ${steerAngleClamped >= 0 ? '+' : ''}${steerAngleClamped.toFixed(1)}°`;
+      document.getElementById("steer-arr-l").className = (steerAngleClamped < -1.5) ? "steer-left-active" : "";
+      document.getElementById("steer-arr-r").className = (steerAngleClamped > 1.5) ? "steer-right-active" : "";
+
+      // 4. REAR BRAKES (0x0A0)
+      const isBraking = (state.targetBrakeSwitch === 1 || state.currentBrakePress > 1);
+      document.getElementById("center-car-card").classList.toggle("brake-engaged", isBraking);
+      document.getElementById("brake-status-text").textContent = isBraking ? `ENGAGED (${Math.round(state.currentBrakePress)}%)` : "RELEASED (0%)";
+      document.getElementById("brake-meter-fill").style.width = `${Math.max(0, Math.min(100, state.currentBrakePress))}%`;
+
+      // 5. TRANSMISSION
+      const gearLetter = state.gear.startsWith("D") ? "D" : state.gear;
+      document.querySelectorAll(".gear-item").forEach(item => item.classList.remove("active"));
+      if (gearLetter === "P") document.getElementById("gear-p").classList.add("active");
+      else if (gearLetter === "R") document.getElementById("gear-r").classList.add("active");
+      else if (gearLetter === "N") document.getElementById("gear-n").classList.add("active");
+      else if (gearLetter === "D") {
+        document.getElementById("gear-d").classList.add("active");
+        document.getElementById("gear-sub-num").textContent = state.gear.length > 1 ? state.gear.substring(1) : (state.gearNum || "1");
+      }
+
+      // 6. LOWER BUS METRICS
+      document.getElementById("bus-load-val").textContent = `${state.busLoadPct.toFixed(1)}%`;
+      document.getElementById("bus-load-bar").style.width = `${Math.min(100, state.busLoadPct * 5)}%`;
+      document.getElementById("bus-fps-val").textContent = state.busFps.toFixed(1);
+      document.getElementById("bus-total-frames").textContent = state.totalFrames.toLocaleString();
+
+      // Audio frequency modulation or mute
+      updateAudioSynth(state.currentSpeed, state.currentRpm);
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      initializeGauges();
+      connectWebSocket();
+      requestAnimationFrame(renderLoop);
+    });
+  </script>
+</body>
+</html>

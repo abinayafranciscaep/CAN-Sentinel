@@ -454,6 +454,30 @@ The simulator features a real-time in-place terminal instrument cluster that tra
 3. **Absolute Monotonic Sleep (`clock_nanosleep`):** Each ECU thread sleeps using `CLOCK_MONOTONIC` and `TIMER_ABSTIME`, completely preventing cumulative timer drift.
 4. **Graceful Multi-Thread Teardown:** Upon `SIGINT` (`Ctrl+C`), all threads are joined via `pthread_join()`, ensuring zero memory or file descriptor leaks on exit.
 
+## Real-Time Web-Based EV Sport Digital Dashboard
+
+In addition to the in-place ANSI terminal cluster, the project includes an interactive, browser-based digital instrument dashboard (Porsche Taycan / Audi e-tron GT style) located in `~/CAN-Sentinel/ecu-simulator/dashboard/` (or repository path `docs/member-1/dashboard/`).
+
+### Starting the Web Dashboard with Make
+
+```bash
+# Launch the Python SocketCAN bridge and Web Dashboard server
+make dashboard
+```
+
+Once started, navigate to:
+* **Inside Kali Linux:** `http://localhost:8080`
+* **From Windows host browser:** `http://<kali-ip>:8080` (find your IP in Kali via `hostname -I`), or `http://localhost:8080` if VirtualBox port 8080 is forwarded.
+
+### Dashboard Capabilities:
+* **Native SocketCAN Bridge (`bridge.py`):** Unpacks all 6 ECUs directly from `vcan0` and streams JSON telemetry over RFC 6455 WebSockets at 20 Hz.
+* **Dual 60 FPS Radial Gauges:** Sweeping luminous needles for Speed (0–140 km/h) and Powertrain RPM (0–5000 RPM) with progressive amber/redline warning.
+* **Articulated Steering:** Front wheels physically turn left/right in real time matching CAN ID `0x0B0` signed angle (-45° to +45°).
+* **Reactive Brake Lights:** Continuous rear LED lightbar illuminates neon red when CAN ID `0x0A0` brake switch activates.
+* **Holographic Transmission:** Automatic gear indicator `[ P ] [ R ] [ N ] ◄[ D1-D5 ]►`.
+* **Physical Bus Load:** Real-time bus load monitoring (~8.19% @ 500 kbps baseline).
+* **Synthesized EV Sound:** Real-time Web Audio motor synthesis modulated by speed and RPM.
+
 
 ## Known limitations
 
