@@ -1433,7 +1433,19 @@ class Dashboard(QMainWindow):
         alerts_title = QLabel("Alert Review")
         alerts_title.setStyleSheet("font-size: 20px; font-weight: bold; color: #FFFFFF;")
         if ALERT:
-            alert_kind = "SAMPLE ALERT — not a real detector finding" if IS_SAMPLE_ALERT else "Alert loaded from configured alert file"
+            if IS_SAMPLE_ALERT:
+                alert_kind = (
+                    "SAMPLE ALERT — NOT A REAL DETECTOR FINDING\n"
+                    "Source: Sample alert file\n"
+                    "Verification: Not verified by the ML detection engine"
+                )
+            else:
+                alert_kind = (
+                "ALERT LOADED — VERIFICATION PENDING\n"
+                f"Source: {ALERT_FILE.name}\n"
+                "Verification: ML detection not confirmed"
+                )
+
             alert_summary = (
                 f"{alert_kind}\n\n"
                 f"Type: {ALERT.get('attack_type', 'Unknown')}\n"
@@ -1445,7 +1457,11 @@ class Dashboard(QMainWindow):
                 f"Technique: {ALERT.get('technique', 'Unknown')}"
             )
         else:
-            alert_summary = "No alert file loaded. No detector findings are available in this dashboard yet."
+            alert_summary = (
+                "NO ALERT LOADED\n\n"
+                "No alert data is available in the dashboard.\n"
+                "This does not confirm that the CAN traffic is safe."
+            )
         self.alert_summary = alert_summary
         self.alert_reviewed = False
         self.alert_details = QLabel(alert_summary)
