@@ -3074,3 +3074,82 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 
 1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
 2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, and real-time Web EV sport dashboard in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, and 12.6) complete.
+
+The multi-threaded simulator was compiled and evaluated in the Kali Linux VM environment over a 120-second automated execution:
+
+```text
+┌──(kali㉿kali)-[~/CAN-Sentinel/ecu-simulator]
+└─$ make clean && make
+rm -f ecu_simulator test_payloads
+Cleaned build artifacts: ecu_simulator test_payloads
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread -o ecu_simulator ecu_simulator.c -lpthread -lrt
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread -o test_payloads test_payloads.c
+
+┌──(kali㉿kali)-[~/CAN-Sentinel/ecu-simulator]
+└─$ ./ecu_simulator --threads --duration 120
+Random seed: 1792827858
+====================================================================
+CAN-Sentinel ECU Simulator (Multi-Threaded Architecture)
+====================================================================
+Concurrency: 6 Autonomous ECU POSIX Threads + 1 Physics Engine Thread
+CAN interface: vcan0 (Dedicated SocketCAN socket per ECU thread)
+Synchronization: C11 Lock-Free Atomics (<stdatomic.h> zero mutex contention)
+Real-Time Scheduling:
+  - 0x0A0 (Brake)      & 0x0B0 (Steering): SCHED_FIFO Priority 80 (ASIL-D)
+  - 0x100 (Engine RPM) & 0x200 (Speed):    SCHED_FIFO Priority 50 (ASIL-B)
+  - 0x300 (Temp)       & 0x600 (Info):     SCHED_OTHER (QM)
+Simulation duration: 120 seconds (auto-stop)
+Press Ctrl+C to stop.
+====================================================================
+[TELEMETRY-MT] [00:05] Frames:    1603 | Rate: 318.4 fps | Speed:  53 km/h | RPM: 2168 | Steer:  +0.0 deg | Brake: ON (51%)
+[TELEMETRY-MT] [00:10] Frames:    3092 | Rate: 309.0 fps | Speed:  37 km/h | RPM: 1718 | Steer:  +9.3 deg | Brake: ON (100%)
+[TELEMETRY-MT] [00:15] Frames:    4694 | Rate: 311.9 fps | Speed:  34 km/h | RPM: 1675 | Steer:  +2.3 deg | Brake: ON (100%)
+[TELEMETRY-MT] [00:20] Frames:    6291 | Rate: 314.1 fps | Speed:  34 km/h | RPM: 1625 | Steer:  +4.7 deg | Brake: OFF
+...
+[TELEMETRY-MT] [01:50] Frames:   35017 | Rate: 318.2 fps | Speed:  43 km/h | RPM: 1849 | Steer: -11.2 deg | Brake: ON (100%)
+[TELEMETRY-MT] [01:55] Frames:   36613 | Rate: 318.3 fps | Speed:  63 km/h | RPM: 2345 | Steer:  -2.8 deg | Brake: ON (29%)
+
+[DURATION] Reached configured duration of 120 seconds. Stopping...
+
+Shutting down multi-threaded ECU nodes cleanly...
+CAN-Sentinel Multi-Threaded ECU Simulator stopped.
+Execution summary: 37920 frames transmitted in 119.23 seconds (average rate: 318.05 fps).
+The multi-threaded simulator was compiled and evaluated in the Kali Linux VM environment over a 120-second automated execution:
+
+```text
+┌──(kali㉿kali)-[~/CAN-Sentinel/ecu-simulator]
+└─$ make clean && make
+rm -f ecu_simulator test_payloads
+Cleaned build artifacts: ecu_simulator test_payloads
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread -o ecu_simulator ecu_simulator.c -lpthread -lrt
+gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread -o test_payloads test_payloads.c
+
+┌──(kali㉿kali)-[~/CAN-Sentinel/ecu-simulator]
+└─$ ./ecu_simulator --threads --duration 120
+Random seed: 1792827858
+====================================================================
+CAN-Sentinel ECU Simulator (Multi-Threaded Architecture)
+====================================================================
+Concurrency: 6 Autonomous ECU POSIX Threads + 1 Physics Engine Thread
+CAN interface: vcan0 (Dedicated SocketCAN socket per ECU thread)
+Synchronization: C11 Lock-Free Atomics (<stdatomic.h> zero mutex contention)
+Real-Time Scheduling:
+  - 0x0A0 (Brake)      & 0x0B0 (Steering): SCHED_FIFO Priority 80 (ASIL-D)
+  - 0x100 (Engine RPM) & 0x200 (Speed):    SCHED_FIFO Priority 50 (ASIL-B)
+  - 0x300 (Temp)       & 0x600 (Info):     SCHED_OTHER (QM)
+Simulation duration: 120 seconds (auto-stop)
+Press Ctrl+C to stop.
+====================================================================
+[TELEMETRY-MT] [00:05] Frames:    1603 | Rate: 318.4 fps | Speed:  53 km/h | RPM: 2168 | Steer:  +0.0 deg | Brake: ON (51%)
+[TELEMETRY-MT] [00:10] Frames:    3092 | Rate: 309.0 fps | Speed:  37 km/h | RPM: 1718 | Steer:  +9.3 deg | Brake: ON (100%)
+[TELEMETRY-MT] [00:15] Frames:    4694 | Rate: 311.9 fps | Speed:  34 km/h | RPM: 1675 | Steer:  +2.3 deg | Brake: ON (100%)
+[TELEMETRY-MT] [00:20] Frames:    6291 | Rate: 314.1 fps | Speed:  34 km/h | RPM: 1625 | Steer:  +4.7 deg | Brake: OFF
+...
+[TELEMETRY-MT] [01:50] Frames:   35017 | Rate: 318.2 fps | Speed:  43 km/h | RPM: 1849 | Steer: -11.2 deg | Brake: ON (100%)
+[TELEMETRY-MT] [01:55] Frames:   36613 | Rate: 318.3 fps | Speed:  63 km/h | RPM: 2345 | Steer:  -2.8 deg | Brake: ON (29%)
+
+[DURATION] Reached configured duration of 120 seconds. Stopping...
+
+Shutting down multi-threaded ECU nodes cleanly...
+CAN-Sentinel Multi-Threaded ECU Simulator stopped.
+Execution summary: 37920 frames transmitted in 119.23 seconds (average rate: 318.05 fps).
