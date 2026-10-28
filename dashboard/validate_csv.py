@@ -6,6 +6,7 @@ Usage: python3 dashboard/validate_csv.py data/<file>.csv
 import csv
 import re
 import sys
+import math
 
 HEADER = ["timestamp", "can_id", "dlc", "data_hex", "label"]
 LABELS = {"normal", "flood", "spoof_brake", "replay", "fuzz", "masquerade", "diag_abuse"}
@@ -17,8 +18,11 @@ def check_row(row):
     timestamp, can_id, dlc, data_hex, label = row
 
     # Check 1: timestamp must be a number or the feature code can't compute inter-arrival times
+        # Check 1: timestamp must be finite numeric data
     try:
-        float(timestamp)
+        timestamp_value = float(timestamp)
+        if not math.isfinite(timestamp_value):
+            problems.append(f"timestamp must be finite: {timestamp!r}")
     except ValueError:
         problems.append(f"timestamp not a number: {timestamp!r}")
 
@@ -49,20 +53,33 @@ def check_row(row):
 
 def main(path):
     bad = 0
-    with open(path, newline="") as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        if header != HEADER:
-            print(f"BAD HEADER: {header}")
-            bad += 1
-        total = 0
-        for line_no, row in enumerate(reader, start=2):
-            total += 1
-            for p in check_row(row):
-                print(f"line {line_no}: {p}")
+    total = 0
+
+    try:
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+
+            if header is None:
+                print("ERROR: CSV file is empty or has no header.")
+                return 1
+
+            if header != HEADER:
+                print(f"BAD HEADER: {header}")
                 bad += 1
+
+            for line_no, row in enumerate(reader, start=2):
+                total += 1
+                for problem in check_row(row):
+                    print(f"line {line_no}: {problem}")
+                    bad += 1
+
+    except (OSError, UnicodeError, csv.Error) as e:
+        print(f"ERROR: Could not validate CSV: {e}")
+        return 1
+
     print(f"{total} rows checked, {bad} problems")
     return bad
-
 if __name__ == "__main__":
     sys.exit(1 if main(sys.argv[1]) else 0)
+
