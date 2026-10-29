@@ -400,6 +400,7 @@ The simulator features a real-time in-place terminal instrument cluster that tra
 
 ### Key Cluster Features:
 * **Zero-Flicker In-Place Redraw:** Uses ANSI cursor addressing (`\033[H`) to refresh the dashboard at 10 Hz without clearing the screen or causing terminal flicker.
+* **Dynamic PRND Transmission & Automatic Gear Indicator:** Automatic gear selector (`[►P◄]`, `[►N◄]`, `[►D1]`–`[►D5]`) coupled to vehicle speed and braking state, with active drive mode indicators (`[PARK ENGAGED]`, `[NEUTRAL IDLE]`, `[FORWARD D-1]`–`[FORWARD D-5]`).
 * **Dynamic Graphical Gauges:** Live progress bars for Vehicle Speed, Engine RPM, Brake Pressure, and a center-aligned bidirectional Steering Angle indicator.
 * **Per-ECU Real-Time Activity:** Real-time transmission metrics and frame counters for all 6 CAN IDs alongside their Linux scheduling policies (`SCHED_FIFO` vs `SCHED_OTHER`).
 * **Smart Terminal Detection (`isatty`):** Automatically switches to plain text output if `stdout` is piped to a file (`./ecu_simulator > log.txt`) or a non-interactive CI runner, preventing escape character pollution.
@@ -413,6 +414,7 @@ The simulator features a real-time in-place terminal instrument cluster that tra
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │  VEHICLE TELEMETRY DYNAMICS                                                            │
 │                                                                                        │
+│  GEAR  : [ P ]  [ R ]  [ N ]  [►D3]   DRIVE MODE: [FORWARD D-3]                        │
 │  SPEED : [████████████░░░░░░░░░░░░]   65 km/h  (Range: 0-130 km/h)                     │
 │  RPM   : [████████████░░░░░░░░░░░░]  2462 RPM   (Idle: 800, Redline: 4000)             │
 │  BRAKE : [████████████████████████]  100 %     [● BRAKE ENGAGED]                       │

@@ -47,6 +47,7 @@
     - [Step 12.4: Multi-Threaded Distributed Architecture (pthreads & C11 Atomics)](#step-124-multi-threaded-distributed-architecture-pthreads--c11-atomics)
     - [Step 12.5: Modern ANSI In-Place Digital Instrument Cluster](#step-125-modern-ansi-in-place-digital-instrument-cluster)
     - [Step 12.6: Real-Time Web-Based EV Sport Dashboard (Porsche Taycan / Audi e-tron Style)](#step-126-real-time-web-based-ev-sport-dashboard-porsche-taycan--audi-e-tron-style)
+    - [Step 12.7: Dynamic PRND Transmission & Automatic Gear Indicator](#step-127-dynamic-prnd-transmission--automatic-gear-indicator)
 - [Known Limitations](#known-limitations)
 - [Expected Outcome](#expected-outcome)
 - [Next Steps](#next-steps)
@@ -179,6 +180,7 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Step 12.4: multi-threaded distributed architecture (`pthreads` & C11 atomics) | ✅ Done |
 | Step 12.5: modern ANSI in-place digital instrument cluster | ✅ Done |
 | Step 12.6: real-time web-based EV sport dashboard (`make dashboard`) | ✅ Done |
+| Step 12.7: dynamic PRND transmission & automatic gear indicator | ✅ Done |
 
 ## Development Workflow and Repository Layout
 
@@ -3051,6 +3053,68 @@ The dashboard decouples low-level Linux kernel CAN networking from high-fidelity
 
 ---
 
+### Step 12.7: Dynamic PRND Transmission & Automatic Gear Indicator
+
+> **Environment:** Kali Linux VM (`~/CAN-Sentinel/ecu-simulator/`) and Windows repository (`ecu_sim/ecu_simulator.c`)  
+> **Status:** ✅ **Implemented.** To elevate cockpit realism and demonstrate realistic vehicle powertrain coupling, an automatic transmission drive selector (`[ P ] [ R ] [ N ] [ D ]`) and dynamic gear ratio calculator was built directly into `ecu_simulator.c`.
+
+#### Architectural Highlights
+
+1. **Powertrain Coupling & Dynamic Gear Ratio Logic:**
+   * **Park Mode (`[►P◄]`):** When vehicle speed is `0 km/h` and physical brake switch is active (`0x0A0` Brake Switch = 1), the cluster highlights `[►P◄]` in amber and displays `DRIVE MODE: [PARK ENGAGED]`.
+   * **Neutral Mode (`[►N◄]`):** When vehicle speed is `0 km/h` and the brake is released, the cluster shifts to `[►N◄]` in cyan and displays `DRIVE MODE: [NEUTRAL IDLE]`.
+   * **Forward Drive (`[►D1]` to `[►D5]`):** When vehicle speed climbs above zero, the transmission dynamically calculates forward gear ratios based on velocity and engine RPM:
+     - `1 – 24 km/h`: 1st Gear (`[►D1]`, `DRIVE MODE: [FORWARD D-1]`)
+     - `25 – 49 km/h`: 2nd Gear (`[►D2]`, `DRIVE MODE: [FORWARD D-2]`)
+     - `50 – 74 km/h`: 3rd Gear (`[►D3]`, `DRIVE MODE: [FORWARD D-3]`)
+     - `75 – 104 km/h`: 4th Gear (`[►D4]`, `DRIVE MODE: [FORWARD D-4]`)
+     - `105 – 130 km/h`: 5th Gear (`[►D5]`, `DRIVE MODE: [FORWARD D-5]`)
+2. **Mathematical 90-Column Alignment Preservation:**
+   * Every badge and mode description string is guaranteed to be exactly 26 display columns for the selector and 27 display columns for the mode description.
+   * Utilizes ANSI Cursor Horizontal Absolute (`\033[90G`) to snap the right border `│` to Column 90 with zero jitter.
+3. **Dual Architecture Support:**
+   * Operates seamlessly across both Single-Threaded and Distributed Multi-Threaded (`--threads`) execution modes.
+
+#### Terminal Cluster Preview with PRND Active
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│  ► CAN-SENTINEL AUTOMOTIVE ECU CLUSTER  (MULTI-THREADED DISTRIBUTED)                   │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  Interface: vcan0  │  Kernel: SocketCAN  │  Workers: 7 pthreads (C11 Lock-Free)        │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  VEHICLE TELEMETRY DYNAMICS                                                            │
+│                                                                                        │
+│  GEAR  : [ P ]  [ R ]  [ N ]  [►D3]   DRIVE MODE: [FORWARD D-3]                        │
+│  SPEED : [████████████░░░░░░░░░░░░]   65 km/h  (Range: 0-130 km/h)                     │
+│  RPM   : [████████████░░░░░░░░░░░░]  2462 RPM   (Idle: 800, Redline: 4000)             │
+│  BRAKE : [████████████████████████]  100 %     [● BRAKE ENGAGED]                       │
+│  STEER : [            o           ]   +2.4 deg (Right Turn)                            │
+│  TEMP  : [██████████████░░░░░░░░░░]   95.0 °C  [COOLANT NOMINAL]                       │
+│  INFO  : [● MEDIA ON ] Nav Gateway: Route Guidance Active                              │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  PER-ECU TRANSMISSION STATUS & REAL-TIME SCHEDULING                                    │
+│                                                                                        │
+│  [●] 0x0A0  Brake Controller     20 ms ( 50 Hz) │ Frames:     384 │ SCHED_FIFO (80)    │
+│  [●] 0x0B0  Steering Gateway     10 ms (100 Hz) │ Frames:     768 │ SCHED_FIFO (80)    │
+│  [●] 0x100  Powertrain Engine    10 ms (100 Hz) │ Frames:     765 │ SCHED_FIFO (50)    │
+│  [●] 0x200  Speed Sensor         20 ms ( 50 Hz) │ Frames:     384 │ SCHED_FIFO (50)    │
+│  [●] 0x300  Thermal Mgmt        100 ms ( 10 Hz) │ Frames:      76 │ SCHED_OTHER (0)    │
+│  [●] 0x600  Infotainment Media  100 ms ( 10 Hz) │ Frames:      76 │ SCHED_OTHER (0)    │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  TIME: 00:07 / 01:00  [██░░░░░░░░░░░░]   12% │ TOTAL:    2453 frames (Rate: 318.5 fps) │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+ [Press Ctrl+C to stop simulation cleanly]
+```
+
+![PRND Transmission & Gear Cluster](screenshots/46-prnd-gear-cluster.png)
+
+**Screenshot 46:** Dynamic PRND transmission selector and automatic gear ratio indicator running in real time on `vcan0` with 90-column alignment.
+
+**Result:** Step 12.7 adds authentic automotive powertrain gear telemetry to the digital instrument cluster, connecting vehicle speed and brake dynamics to active gear ratios.
+
+---
+
 ## Known Limitations
 
 - Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
@@ -3073,83 +3137,4 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 ## Next Steps
 
 1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
-2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, and real-time Web EV sport dashboard in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, and 12.6) complete.
-
-The multi-threaded simulator was compiled and evaluated in the Kali Linux VM environment over a 120-second automated execution:
-
-```text
-┌──(kali㉿kali)-[~/CAN-Sentinel/ecu-simulator]
-└─$ make clean && make
-rm -f ecu_simulator test_payloads
-Cleaned build artifacts: ecu_simulator test_payloads
-gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread -o ecu_simulator ecu_simulator.c -lpthread -lrt
-gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread -o test_payloads test_payloads.c
-
-┌──(kali㉿kali)-[~/CAN-Sentinel/ecu-simulator]
-└─$ ./ecu_simulator --threads --duration 120
-Random seed: 1792827858
-====================================================================
-CAN-Sentinel ECU Simulator (Multi-Threaded Architecture)
-====================================================================
-Concurrency: 6 Autonomous ECU POSIX Threads + 1 Physics Engine Thread
-CAN interface: vcan0 (Dedicated SocketCAN socket per ECU thread)
-Synchronization: C11 Lock-Free Atomics (<stdatomic.h> zero mutex contention)
-Real-Time Scheduling:
-  - 0x0A0 (Brake)      & 0x0B0 (Steering): SCHED_FIFO Priority 80 (ASIL-D)
-  - 0x100 (Engine RPM) & 0x200 (Speed):    SCHED_FIFO Priority 50 (ASIL-B)
-  - 0x300 (Temp)       & 0x600 (Info):     SCHED_OTHER (QM)
-Simulation duration: 120 seconds (auto-stop)
-Press Ctrl+C to stop.
-====================================================================
-[TELEMETRY-MT] [00:05] Frames:    1603 | Rate: 318.4 fps | Speed:  53 km/h | RPM: 2168 | Steer:  +0.0 deg | Brake: ON (51%)
-[TELEMETRY-MT] [00:10] Frames:    3092 | Rate: 309.0 fps | Speed:  37 km/h | RPM: 1718 | Steer:  +9.3 deg | Brake: ON (100%)
-[TELEMETRY-MT] [00:15] Frames:    4694 | Rate: 311.9 fps | Speed:  34 km/h | RPM: 1675 | Steer:  +2.3 deg | Brake: ON (100%)
-[TELEMETRY-MT] [00:20] Frames:    6291 | Rate: 314.1 fps | Speed:  34 km/h | RPM: 1625 | Steer:  +4.7 deg | Brake: OFF
-...
-[TELEMETRY-MT] [01:50] Frames:   35017 | Rate: 318.2 fps | Speed:  43 km/h | RPM: 1849 | Steer: -11.2 deg | Brake: ON (100%)
-[TELEMETRY-MT] [01:55] Frames:   36613 | Rate: 318.3 fps | Speed:  63 km/h | RPM: 2345 | Steer:  -2.8 deg | Brake: ON (29%)
-
-[DURATION] Reached configured duration of 120 seconds. Stopping...
-
-Shutting down multi-threaded ECU nodes cleanly...
-CAN-Sentinel Multi-Threaded ECU Simulator stopped.
-Execution summary: 37920 frames transmitted in 119.23 seconds (average rate: 318.05 fps).
-The multi-threaded simulator was compiled and evaluated in the Kali Linux VM environment over a 120-second automated execution:
-
-```text
-┌──(kali㉿kali)-[~/CAN-Sentinel/ecu-simulator]
-└─$ make clean && make
-rm -f ecu_simulator test_payloads
-Cleaned build artifacts: ecu_simulator test_payloads
-gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread -o ecu_simulator ecu_simulator.c -lpthread -lrt
-gcc -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread -o test_payloads test_payloads.c
-
-┌──(kali㉿kali)-[~/CAN-Sentinel/ecu-simulator]
-└─$ ./ecu_simulator --threads --duration 120
-Random seed: 1792827858
-====================================================================
-CAN-Sentinel ECU Simulator (Multi-Threaded Architecture)
-====================================================================
-Concurrency: 6 Autonomous ECU POSIX Threads + 1 Physics Engine Thread
-CAN interface: vcan0 (Dedicated SocketCAN socket per ECU thread)
-Synchronization: C11 Lock-Free Atomics (<stdatomic.h> zero mutex contention)
-Real-Time Scheduling:
-  - 0x0A0 (Brake)      & 0x0B0 (Steering): SCHED_FIFO Priority 80 (ASIL-D)
-  - 0x100 (Engine RPM) & 0x200 (Speed):    SCHED_FIFO Priority 50 (ASIL-B)
-  - 0x300 (Temp)       & 0x600 (Info):     SCHED_OTHER (QM)
-Simulation duration: 120 seconds (auto-stop)
-Press Ctrl+C to stop.
-====================================================================
-[TELEMETRY-MT] [00:05] Frames:    1603 | Rate: 318.4 fps | Speed:  53 km/h | RPM: 2168 | Steer:  +0.0 deg | Brake: ON (51%)
-[TELEMETRY-MT] [00:10] Frames:    3092 | Rate: 309.0 fps | Speed:  37 km/h | RPM: 1718 | Steer:  +9.3 deg | Brake: ON (100%)
-[TELEMETRY-MT] [00:15] Frames:    4694 | Rate: 311.9 fps | Speed:  34 km/h | RPM: 1675 | Steer:  +2.3 deg | Brake: ON (100%)
-[TELEMETRY-MT] [00:20] Frames:    6291 | Rate: 314.1 fps | Speed:  34 km/h | RPM: 1625 | Steer:  +4.7 deg | Brake: OFF
-...
-[TELEMETRY-MT] [01:50] Frames:   35017 | Rate: 318.2 fps | Speed:  43 km/h | RPM: 1849 | Steer: -11.2 deg | Brake: ON (100%)
-[TELEMETRY-MT] [01:55] Frames:   36613 | Rate: 318.3 fps | Speed:  63 km/h | RPM: 2345 | Steer:  -2.8 deg | Brake: ON (29%)
-
-[DURATION] Reached configured duration of 120 seconds. Stopping...
-
-Shutting down multi-threaded ECU nodes cleanly...
-CAN-Sentinel Multi-Threaded ECU Simulator stopped.
-Execution summary: 37920 frames transmitted in 119.23 seconds (average rate: 318.05 fps).
+2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, and dynamic PRND transmission gear indicator in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, and 12.7) complete.

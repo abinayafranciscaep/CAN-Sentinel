@@ -297,6 +297,32 @@ static void render_dashboard_cluster(const TelemetrySnapshot *s)
     if (s->steer_deci < -15) turn_str = "Left Turn ";
     else if (s->steer_deci > 15) turn_str = "Right Turn";
 
+    /* Transmission Gear & Drive Mode Calculation */
+    char gear_badge[128];
+    char mode_desc[64];
+    if (s->speed_kmh == 0) {
+        if (s->brake_switch) {
+            snprintf(gear_badge, sizeof(gear_badge), "%s[►P◄]%s  %s[ R ]  [ N ]  [ D ]%s",
+                     ANSI_YELLOW, ANSI_RESET, ANSI_GRAY, ANSI_RESET);
+            snprintf(mode_desc, sizeof(mode_desc), "%s[PARK ENGAGED] %s", ANSI_YELLOW, ANSI_RESET);
+        } else {
+            snprintf(gear_badge, sizeof(gear_badge), "%s[ P ]  [ R ]%s  %s[►N◄]%s  %s[ D ]%s",
+                     ANSI_GRAY, ANSI_RESET, ANSI_CYAN, ANSI_RESET, ANSI_GRAY, ANSI_RESET);
+            snprintf(mode_desc, sizeof(mode_desc), "%s[NEUTRAL IDLE] %s", ANSI_CYAN, ANSI_RESET);
+        }
+    } else {
+        int g = 1;
+        if (s->speed_kmh < 25) g = 1;
+        else if (s->speed_kmh < 50) g = 2;
+        else if (s->speed_kmh < 75) g = 3;
+        else if (s->speed_kmh < 105) g = 4;
+        else g = 5;
+
+        snprintf(gear_badge, sizeof(gear_badge), "%s[ P ]  [ R ]  [ N ]%s  %s[►D%d]%s",
+                 ANSI_GRAY, ANSI_RESET, ANSI_GREEN, g, ANSI_RESET);
+        snprintf(mode_desc, sizeof(mode_desc), "%s[FORWARD D-%d]  %s", ANSI_GREEN, g, ANSI_RESET);
+    }
+
     /* Move cursor to row 1, col 1 without clearing entire screen (zero flicker) */
     printf("\033[H");
 
@@ -323,6 +349,10 @@ static void render_dashboard_cluster(const TelemetrySnapshot *s)
     printf("%s│%s  %sVEHICLE TELEMETRY DYNAMICS%s%*s\033[90G%s│%s\033[K\n",
            ANSI_CYAN, ANSI_RESET, ANSI_WHITE, ANSI_RESET, 60, "", ANSI_CYAN, ANSI_RESET);
     printf("%s│%*s\033[90G%s│%s\033[K\n", ANSI_CYAN, 88, "", ANSI_CYAN, ANSI_RESET);
+
+    printf("%s│%s  GEAR  : %s   DRIVE MODE: %s%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, gear_badge, mode_desc,
+           22, "", ANSI_CYAN, ANSI_RESET);
 
     printf("%s│%s  SPEED : %s  %s%3d km/h%s  (Range: 0-130 km/h)%*s\033[90G%s│%s\033[K\n",
            ANSI_CYAN, ANSI_RESET, speed_bar, ANSI_GREEN, s->speed_kmh, ANSI_RESET,
