@@ -392,6 +392,9 @@ The simulator features a high-concurrency multi-threaded distributed architectur
 
 # 4. Multi-threaded mode with deterministic seed and 60-second auto-stop duration
 ./ecu_sim/ecu_simulator --threads --duration 60 42
+
+# 5. Live visual cluster with simultaneous background file logging
+./ecu_sim/ecu_simulator --threads --log telemetry.log
 ```
 
 ## Modern ANSI Digital Instrument Cluster
@@ -400,6 +403,7 @@ The simulator features a real-time in-place terminal instrument cluster that tra
 
 ### Key Cluster Features:
 * **Zero-Flicker In-Place Redraw:** Uses ANSI cursor addressing (`\033[H`) to refresh the dashboard at 10 Hz without clearing the screen or causing terminal flicker.
+* **Simultaneous Live Telemetry History Feed:** Integrates a rolling 50-second interval diagnostic telemetry event log (10 rolling snapshot rows) directly inside the cluster, displaying historical frames, transmission rates, speeds, RPMs, and braking engagement without screen tearing or visual flicker.
 * **Dynamic PRND Transmission & Automatic Gear Indicator:** Automatic gear selector (`[►P◄]`, `[►N◄]`, `[►D1]`–`[►D5]`) coupled to vehicle speed and braking state, with active drive mode indicators (`[PARK ENGAGED]`, `[NEUTRAL IDLE]`, `[FORWARD D-1]`–`[FORWARD D-5]`).
 * **Dynamic Graphical Gauges:** Live progress bars for Vehicle Speed, Engine RPM, Brake Pressure, and a center-aligned bidirectional Steering Angle indicator.
 * **Per-ECU Real-Time Activity:** Real-time transmission metrics and frame counters for all 6 CAN IDs alongside their Linux scheduling policies (`SCHED_FIFO` vs `SCHED_OTHER`).
@@ -431,7 +435,20 @@ The simulator features a real-time in-place terminal instrument cluster that tra
 │  [●] 0x300  Thermal Mgmt        100 ms ( 10 Hz) │ Frames:      76 │ SCHED_OTHER (0)    │
 │  [●] 0x600  Infotainment Media  100 ms ( 10 Hz) │ Frames:      76 │ SCHED_OTHER (0)    │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
-│  TIME: 00:07 / 01:00  [██░░░░░░░░░░░░]   12% │ TOTAL:    2453 frames (Rate: 318.5 fps) │
+│  LIVE TELEMETRY FEED (ROLLING 50-SECOND WINDOW / 10 RECENT SNAPSHOTS)                  │
+│                                                                                        │
+│  [00:00] Frames:       0 │   0.0 fps │ Speed:  60 km/h │ RPM: 2300 │ Brake: OFF        │
+│  [00:05] Frames:    1602 │ 320.1 fps │ Speed:  48 km/h │ RPM: 2010 │ Brake: OFF        │
+│  [00:10] Frames:    3203 │ 320.1 fps │ Speed:  35 km/h │ RPM: 1680 │ Brake: ON (64%)   │
+│  [00:15] Frames:    4804 │ 320.0 fps │ Speed:  22 km/h │ RPM: 1350 │ Brake: ON (100%)  │
+│  [00:20] Frames:    6405 │ 320.0 fps │ Speed:  18 km/h │ RPM: 1250 │ Brake: ON (100%)  │
+│  [00:25] Frames:    8006 │ 320.1 fps │ Speed:  32 km/h │ RPM: 1600 │ Brake: OFF        │
+│  [00:30] Frames:    9607 │ 320.1 fps │ Speed:  45 km/h │ RPM: 1920 │ Brake: OFF        │
+│  [00:35] Frames:   11208 │ 320.0 fps │ Speed:  58 km/h │ RPM: 2250 │ Brake: OFF        │
+│  [00:40] Frames:   12809 │ 320.1 fps │ Speed:  62 km/h │ RPM: 2350 │ Brake: OFF        │
+│  [00:45] Frames:   14410 │ 320.0 fps │ Speed:  65 km/h │ RPM: 2462 │ Brake: ON (100%)  │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  TIME: 00:45 / 01:00  [█████████░░░]   75% │ TOTAL:   14410 frames (Rate: 320.0 fps) │
 └────────────────────────────────────────────────────────────────────────────────────────┘
  [Press Ctrl+C to stop simulation cleanly]
 ```

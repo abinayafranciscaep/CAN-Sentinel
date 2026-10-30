@@ -93,6 +93,70 @@ typedef struct {
 static volatile sig_atomic_t running = 1;
 static bool use_dashboard = true;
 
+#define TELEMETRY_HISTORY_LINES 10
+
+typedef struct {
+    int minutes;
+    int seconds;
+    unsigned long frames;
+    double fps;
+    int speed_kmh;
+    int rpm;
+    int steer_deci;
+    int brake_switch;
+    int brake_pressure;
+    bool valid;
+} TelemetryHistoryEntry;
+
+static TelemetryHistoryEntry telemetry_history[TELEMETRY_HISTORY_LINES];
+static int telemetry_history_count = 0;
+static FILE *telemetry_log_file = NULL;
+
+static void record_telemetry_snapshot(int min, int sec, unsigned long frames, double fps,
+                                      int spd, int rpm, int steer, int b_switch, int b_press,
+                                      bool is_mt)
+{
+    if (telemetry_log_file) {
+        char brake_info[16];
+        if (b_switch) {
+            snprintf(brake_info, sizeof(brake_info), "ON (%d%%)", b_press);
+        } else {
+            snprintf(brake_info, sizeof(brake_info), "OFF");
+        }
+        fprintf(telemetry_log_file, "[TELEMETRY%s] [%02d:%02d] Frames: %7lu | Rate: %5.1f fps | Speed: %3d km/h | RPM: %4d | Steer: %+5.1f deg | Brake: %s\n",
+                (is_mt ? "-MT" : ""), min, sec, frames, fps, spd, rpm, (double)steer / 10.0, brake_info);
+        fflush(telemetry_log_file);
+    }
+
+    if (telemetry_history_count < TELEMETRY_HISTORY_LINES) {
+        telemetry_history[telemetry_history_count].minutes = min;
+        telemetry_history[telemetry_history_count].seconds = sec;
+        telemetry_history[telemetry_history_count].frames = frames;
+        telemetry_history[telemetry_history_count].fps = fps;
+        telemetry_history[telemetry_history_count].speed_kmh = spd;
+        telemetry_history[telemetry_history_count].rpm = rpm;
+        telemetry_history[telemetry_history_count].steer_deci = steer;
+        telemetry_history[telemetry_history_count].brake_switch = b_switch;
+        telemetry_history[telemetry_history_count].brake_pressure = b_press;
+        telemetry_history[telemetry_history_count].valid = true;
+        telemetry_history_count++;
+    } else {
+        for (int i = 0; i < TELEMETRY_HISTORY_LINES - 1; i++) {
+            telemetry_history[i] = telemetry_history[i + 1];
+        }
+        telemetry_history[TELEMETRY_HISTORY_LINES - 1].minutes = min;
+        telemetry_history[TELEMETRY_HISTORY_LINES - 1].seconds = sec;
+        telemetry_history[TELEMETRY_HISTORY_LINES - 1].frames = frames;
+        telemetry_history[TELEMETRY_HISTORY_LINES - 1].fps = fps;
+        telemetry_history[TELEMETRY_HISTORY_LINES - 1].speed_kmh = spd;
+        telemetry_history[TELEMETRY_HISTORY_LINES - 1].rpm = rpm;
+        telemetry_history[TELEMETRY_HISTORY_LINES - 1].steer_deci = steer;
+        telemetry_history[TELEMETRY_HISTORY_LINES - 1].brake_switch = b_switch;
+        telemetry_history[TELEMETRY_HISTORY_LINES - 1].brake_pressure = b_press;
+        telemetry_history[TELEMETRY_HISTORY_LINES - 1].valid = true;
+    }
+}
+
 /* Single-threaded state storage */
 static ECU ecus[ECU_COUNT] = {
     {0x0A0,  20000, {0, 0}, 0},  /* Brake: 20 ms */
@@ -418,6 +482,41 @@ static void render_dashboard_cluster(const TelemetrySnapshot *s)
 
     printf("%s├────────────────────────────────────────────────────────────────────────────────────────┤%s\033[K\n", ANSI_CYAN, ANSI_RESET);
 
+    /* Rolling Telemetry History Feed (Simultaneous with visual cluster) */
+    printf("%s│%s  %sLIVE TELEMETRY FEED (ROLLING 50-SECOND WINDOW / 10 RECENT SNAPSHOTS)%s%*s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, ANSI_WHITE, ANSI_RESET, 18, "", ANSI_CYAN, ANSI_RESET);
+    printf("%s│%*s\033[90G%s│%s\033[K\n", ANSI_CYAN, 88, "", ANSI_CYAN, ANSI_RESET);
+
+    for (int i = 0; i < TELEMETRY_HISTORY_LINES; i++) {
+        if (telemetry_history[i].valid) {
+            char brake_buf[32];
+            if (telemetry_history[i].brake_switch) {
+                if (telemetry_history[i].brake_pressure == 100) {
+                    snprintf(brake_buf, sizeof(brake_buf), "%sON (100%%)%s", ANSI_YELLOW, ANSI_RESET);
+                } else {
+                    snprintf(brake_buf, sizeof(brake_buf), "%sON (%2d%%)%s ", ANSI_YELLOW, telemetry_history[i].brake_pressure, ANSI_RESET);
+                }
+            } else {
+                snprintf(brake_buf, sizeof(brake_buf), "%sOFF      %s", ANSI_GRAY, ANSI_RESET);
+            }
+
+            printf("%s│%s  %s[%02d:%02d]%s Frames: %s%7lu%s │ %s%5.1f fps%s │ Speed: %s%3d km/h%s │ RPM: %s%4d%s │ Brake: %s\033[90G%s│%s\033[K\n",
+                   ANSI_CYAN, ANSI_RESET,
+                   ANSI_WHITE, telemetry_history[i].minutes, telemetry_history[i].seconds, ANSI_RESET,
+                   ANSI_WHITE, telemetry_history[i].frames, ANSI_RESET,
+                   ANSI_GREEN, telemetry_history[i].fps, ANSI_RESET,
+                   ANSI_GREEN, telemetry_history[i].speed_kmh, ANSI_RESET,
+                   ANSI_BLUE, telemetry_history[i].rpm, ANSI_RESET,
+                   brake_buf,
+                   ANSI_CYAN, ANSI_RESET);
+        } else {
+            printf("%s│%s  %s[--:--] Awaiting 5-second periodic telemetry sample...%s%*s\033[90G%s│%s\033[K\n",
+                   ANSI_CYAN, ANSI_RESET, ANSI_GRAY, ANSI_RESET, 33, "", ANSI_CYAN, ANSI_RESET);
+        }
+    }
+
+    printf("%s├────────────────────────────────────────────────────────────────────────────────────────┤%s\033[K\n", ANSI_CYAN, ANSI_RESET);
+
     /* Bottom footer summary */
     if (s->duration_sec > 0) {
         int dur_m = (int)(s->duration_sec / 60);
@@ -591,6 +690,10 @@ static int run_singlethreaded(long duration_sec)
         ecus[i].next_send = add_us(now, initial_delay);
     }
 
+    /* Seed initial telemetry snapshot at t=00:00 */
+    record_telemetry_snapshot(0, 0, 0, 0.0, st_vehicle_speed, st_engine_rpm,
+                              st_steering_angle, st_brake_switch, st_brake_pressure, false);
+
     while (running) {
         if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
             perror("Failed to read monotonic clock");
@@ -611,7 +714,7 @@ static int run_singlethreaded(long duration_sec)
             }
         }
 
-        /* Render Dashboard or Plain Telemetry */
+        /* Render Dashboard (10 Hz) */
         if (use_dashboard) {
             if (timespec_diff_us(&now, &next_dashboard) >= 0) {
                 double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
@@ -644,31 +747,38 @@ static int run_singlethreaded(long duration_sec)
                     next_dashboard = add_us(next_dashboard, DASHBOARD_REFRESH_US);
                 }
             }
-        } else {
-            if (timespec_diff_us(&now, &next_telemetry) >= 0) {
-                long elapsed_sec = now.tv_sec - start_time.tv_sec;
-                int minutes = (int)(elapsed_sec / 60);
-                int seconds = (int)(elapsed_sec % 60);
-                double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
-                                 + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
-                double fps = (elapsed_s > 0.0) ? ((double)total_frames / elapsed_s) : 0.0;
-                char brake_info[16];
+        }
 
-                if (st_brake_switch) {
-                    snprintf(brake_info, sizeof(brake_info), "ON (%d%%)", st_brake_pressure);
-                } else {
-                    snprintf(brake_info, sizeof(brake_info), "OFF");
-                }
+        /* Periodic Telemetry Sampling (5s) */
+        if (timespec_diff_us(&now, &next_telemetry) >= 0) {
+            long elapsed_sec = now.tv_sec - start_time.tv_sec;
+            int minutes = (int)(elapsed_sec / 60);
+            int seconds = (int)(elapsed_sec % 60);
+            double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
+                             + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
+            double fps = (elapsed_s > 0.0) ? ((double)total_frames / elapsed_s) : 0.0;
+            char brake_info[16];
 
+            if (st_brake_switch) {
+                snprintf(brake_info, sizeof(brake_info), "ON (%d%%)", st_brake_pressure);
+            } else {
+                snprintf(brake_info, sizeof(brake_info), "OFF");
+            }
+
+            if (!use_dashboard) {
                 printf("[TELEMETRY] [%02d:%02d] Frames: %7lu | Rate: %5.1f fps | Speed: %3d km/h | RPM: %4d | Steer: %+5.1f deg | Brake: %s\n",
                        minutes, seconds, total_frames, fps, st_vehicle_speed, st_engine_rpm,
                        (double)st_steering_angle / 10.0, brake_info);
                 fflush(stdout);
+            }
 
+            record_telemetry_snapshot(minutes, seconds, total_frames, fps,
+                                      st_vehicle_speed, st_engine_rpm, st_steering_angle,
+                                      st_brake_switch, st_brake_pressure, false);
+
+            next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
+            while (timespec_diff_us(&now, &next_telemetry) >= 0) {
                 next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
-                while (timespec_diff_us(&now, &next_telemetry) >= 0) {
-                    next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
-                }
             }
         }
 
@@ -990,6 +1100,15 @@ static int run_multithreaded(long duration_sec)
         }
     }
 
+    /* Seed initial telemetry snapshot at t=00:00 */
+    record_telemetry_snapshot(0, 0, 0, 0.0,
+                              atomic_load_explicit(&atomic_state.vehicle_speed, memory_order_relaxed),
+                              atomic_load_explicit(&atomic_state.engine_rpm, memory_order_relaxed),
+                              atomic_load_explicit(&atomic_state.steering_angle, memory_order_relaxed),
+                              atomic_load_explicit(&atomic_state.brake_switch, memory_order_relaxed),
+                              atomic_load_explicit(&atomic_state.brake_pressure, memory_order_relaxed),
+                              true);
+
     /* Main thread supervises execution, reports telemetry, and monitors duration */
     while (running) {
         clock_gettime(CLOCK_MONOTONIC, &now);
@@ -999,6 +1118,7 @@ static int run_multithreaded(long duration_sec)
             break;
         }
 
+        /* Render Dashboard (10 Hz) */
         if (use_dashboard) {
             if (timespec_diff_us(&now, &next_dashboard) >= 0) {
                 double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
@@ -1032,37 +1152,43 @@ static int run_multithreaded(long duration_sec)
                     next_dashboard = add_us(next_dashboard, DASHBOARD_REFRESH_US);
                 }
             }
-        } else {
-            if (timespec_diff_us(&now, &next_telemetry) >= 0) {
-                long elapsed_sec = now.tv_sec - start_time.tv_sec;
-                int minutes = (int)(elapsed_sec / 60);
-                int seconds = (int)(elapsed_sec % 60);
-                double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
-                                 + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
-                unsigned long frames = atomic_load_explicit(&atomic_total_frames, memory_order_relaxed);
-                double fps = (elapsed_s > 0.0) ? ((double)frames / elapsed_s) : 0.0;
+        }
 
-                int b_switch = atomic_load_explicit(&atomic_state.brake_switch, memory_order_acquire);
-                int b_press = atomic_load_explicit(&atomic_state.brake_pressure, memory_order_acquire);
-                int spd = atomic_load_explicit(&atomic_state.vehicle_speed, memory_order_acquire);
-                int rpm = atomic_load_explicit(&atomic_state.engine_rpm, memory_order_acquire);
-                int steer = atomic_load_explicit(&atomic_state.steering_angle, memory_order_acquire);
+        /* Periodic Telemetry Sampling (5s) */
+        if (timespec_diff_us(&now, &next_telemetry) >= 0) {
+            long elapsed_sec = now.tv_sec - start_time.tv_sec;
+            int minutes = (int)(elapsed_sec / 60);
+            int seconds = (int)(elapsed_sec % 60);
+            double elapsed_s = (double)(now.tv_sec - start_time.tv_sec)
+                             + (double)(now.tv_nsec - start_time.tv_nsec) / 1e9;
+            unsigned long frames = atomic_load_explicit(&atomic_total_frames, memory_order_relaxed);
+            double fps = (elapsed_s > 0.0) ? ((double)frames / elapsed_s) : 0.0;
 
-                char brake_info[16];
-                if (b_switch) {
-                    snprintf(brake_info, sizeof(brake_info), "ON (%d%%)", b_press);
-                } else {
-                    snprintf(brake_info, sizeof(brake_info), "OFF");
-                }
+            int b_switch = atomic_load_explicit(&atomic_state.brake_switch, memory_order_acquire);
+            int b_press = atomic_load_explicit(&atomic_state.brake_pressure, memory_order_acquire);
+            int spd = atomic_load_explicit(&atomic_state.vehicle_speed, memory_order_acquire);
+            int rpm = atomic_load_explicit(&atomic_state.engine_rpm, memory_order_acquire);
+            int steer = atomic_load_explicit(&atomic_state.steering_angle, memory_order_acquire);
 
+            char brake_info[16];
+            if (b_switch) {
+                snprintf(brake_info, sizeof(brake_info), "ON (%d%%)", b_press);
+            } else {
+                snprintf(brake_info, sizeof(brake_info), "OFF");
+            }
+
+            if (!use_dashboard) {
                 printf("[TELEMETRY-MT] [%02d:%02d] Frames: %7lu | Rate: %5.1f fps | Speed: %3d km/h | RPM: %4d | Steer: %+5.1f deg | Brake: %s\n",
                        minutes, seconds, frames, fps, spd, rpm, (double)steer / 10.0, brake_info);
                 fflush(stdout);
+            }
 
+            record_telemetry_snapshot(minutes, seconds, frames, fps,
+                                      spd, rpm, steer, b_switch, b_press, true);
+
+            next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
+            while (timespec_diff_us(&now, &next_telemetry) >= 0) {
                 next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
-                while (timespec_diff_us(&now, &next_telemetry) >= 0) {
-                    next_telemetry = add_us(next_telemetry, TELEMETRY_INTERVAL_US);
-                }
             }
         }
 
@@ -1103,6 +1229,7 @@ static void print_usage(const char *prog_name)
     printf("  --threads, -t        Enable distributed multi-threaded architecture (6 pthreads + atomics)\n");
     printf("  --plain, -p          Disable visual dashboard and use scrolling text telemetry\n");
     printf("  --duration, -d <sec> Auto-stop simulation after specified duration in seconds\n");
+    printf("  --log, -l <file>     Stream plain text telemetry to specified log file while running\n");
     printf("  --help, -h           Show this help message\n\n");
     printf("Positional:\n");
     printf("  [seed]               Optional unsigned 32-bit integer for deterministic PRNG\n");
@@ -1141,6 +1268,17 @@ int main(int argc, char *argv[])
                 return EXIT_FAILURE;
             }
             duration_sec = val;
+        } else if (strcmp(argv[i], "--log") == 0 || strcmp(argv[i], "-l") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --log requires a file path argument\n");
+                return EXIT_FAILURE;
+            }
+            i++;
+            telemetry_log_file = fopen(argv[i], "w");
+            if (!telemetry_log_file) {
+                fprintf(stderr, "Error: failed to open log file '%s': %s\n", argv[i], strerror(errno));
+                return EXIT_FAILURE;
+            }
         } else {
             /* Try parsing as seed */
             char *endptr = NULL;
@@ -1167,9 +1305,17 @@ int main(int argc, char *argv[])
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
+    int ret;
     if (multithreaded_mode) {
-        return run_multithreaded(duration_sec);
+        ret = run_multithreaded(duration_sec);
     } else {
-        return run_singlethreaded(duration_sec);
+        ret = run_singlethreaded(duration_sec);
     }
+
+    if (telemetry_log_file) {
+        fclose(telemetry_log_file);
+        telemetry_log_file = NULL;
+    }
+
+    return ret;
 }
