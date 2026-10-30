@@ -29,10 +29,12 @@ import datetime
 import html
 import json
 import sys
+import socket
+import time
 from collections import Counter, deque
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -855,11 +857,150 @@ class HeroPanel(QWidget):
         )
         painter.drawImage(x, y, self._car)
 
+class CANSocketReceiver(QThread):
+    frame_received = pyqtSignal(dict)
+    connection_changed = pyqtSignal(bool, str)
+
+    def __init__(self, socket_path="/tmp/can_sentinel.sock"):
+        super().__init__()
+        self.socket_path = socket_path
+        self.running = True
+
+    def run(self):
+        while self.running:
+            client = None
+
+            try:
+                client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                client.settimeout(2)
+                client.connect(self.socket_path)
+
+                self.connection_changed.emit(
+                    True, "Connected to CAN sniffer"
+                )
+
+                buffer = b""
+
+                while self.running:
+                    try:
+                        chunk = client.recv(4096)
+
+                        if not chunk:
+                            break
+
+                        buffer += chunk
+
+                        while b"\n" in buffer:
+                            line, buffer = buffer.split(b"\n", 1)
+
+                            if not line.strip():
+                                continue
+
+                            try:
+                                frame = json.loads(line.decode("utf-8"))
+
+                                required = {
+                                    "timestamp",
+                                    "can_id",
+                                    "dlc",
+                                    "data_hex"
+                                }
+
+                                if not required.issubset(frame):
+                                    continue
+
+                                dlc = int(frame["dlc"])
+                                data_hex = str(frame["data_hex"])
+
+                                if not 0 <= dlc <= 8:
+                                    continue
+
+                                if len(data_hex) != dlc * 2:
+                                    continue
+
+                                frame["can_id"] = str(frame["can_id"])
+                                frame["data_hex"] = data_hex.upper()
+
+                                self.frame_received.emit(frame)
+
+                            except (ValueError, TypeError, UnicodeDecodeError):
+                                continue
+
+                    except socket.timeout:
+                        continue
+
+                self.connection_changed.emit(
+                    False, "CAN sniffer disconnected"
+                )
+
+            except OSError:
+                self.connection_changed.emit(
+                    False, "Waiting for CAN sniffer..."
+                )
+
+            finally:
+                if client:
+                    client.close()
+
+            # Retry connection every 2 seconds
+            for _ in range(20):
+                if not self.running:
+                    break
+                time.sleep(0.1)
+
+    def stop(self):
+        self.running = False
 
 class Dashboard(QMainWindow):
     TAB_OVERVIEW, TAB_TRAFFIC, TAB_ALERTS = 0, 1, 2
 
     # ------------------------------------------------------------------ data
+    def handle_live_frame(self, frame):
+        self.live_frames.append(frame)
+        self.live_mode = True
+        self.mode_label.setText(
+            "LIVE CAN FEED  •  CONNECTED  |  Receiving frames from CAN sniffer"
+        )
+
+    def refresh_live_table(self):
+        if not self.live_frames:
+            return
+
+        rows = [
+            (
+                f"{float(item['timestamp']):.6f}",
+                item["can_id"],
+                str(item["dlc"]),
+                item["data_hex"],
+                "RECEIVED"
+            )
+            for item in reversed(self.live_frames)
+          ]
+        # Update CAN Traffic table
+        self._populate_table(self.traffic_table, rows)
+        self.current_rows = rows
+        self.filter_traffic_table()
+        # Update Overview table with the latest 5 frames
+        self._populate_table(self.overview_table, rows[:5])
+    
+        
+        self.statusBar().showMessage(
+        f"Live CAN traffic | {len(self.live_frames)} frames buffered"
+        )
+
+    def handle_connection_status(self, connected, message):
+        print(f"[SOCKET DEBUG] connected={connected}, message={message}")
+
+        if connected:
+            self.mode_label.setText(
+                "LIVE CAN FEED  •  CONNECTED  |  Connected to CAN sniffer"
+            )
+        else:
+            self.mode_label.setText(
+                "LIVE CAN FEED  •  DISCONNECTED  |  Waiting for CAN sniffer"
+            )
+
+        self.statusBar().showMessage(message)
 
     def refresh_live_data(self, force=False):
         """Refresh the latest recorded CSV; never implies live CAN detection.
@@ -867,6 +1008,10 @@ class Dashboard(QMainWindow):
         The 1-second timer skips work while "Pause refresh" is on; the
         Refresh button and F5 pass force=True.
         """
+        # Do not overwrite live CAN data with recorded CSV data
+        if getattr(self, "live_mode", False):
+            return
+
         if self.paused and not force:
             return
         try:
@@ -962,29 +1107,61 @@ class Dashboard(QMainWindow):
             self.analysis_bars.addWidget(row_widget)
 
     def _populate_table(self, table, rows):
-        table.setRowCount(len(rows))
-        for r, row in enumerate(rows):
-            system = ecu_name(row[1])
-            shown = (row[0], row[1], system or "not in baseline", row[2], row[3], row[4])
-            for c, value in enumerate(shown):
-                item = QTableWidgetItem(str(value))
-                if c == 2 and system is None:
-                    item.setForeground(QColor("#FFB547"))
-                if c == 5:
-                    if value == "ALERT":
-                        item.setForeground(QColor("#FF5A66"))
-                        item.setText("●  ALERT")
-                    else:
-                        item.setForeground(QColor("#35E58B"))
-                        item.setText("●  OK")
-                table.setItem(r, c, item)
+        sorting_was_enabled = table.isSortingEnabled()
 
+        table.setSortingEnabled(False)
+        table.setUpdatesEnabled(False)
+
+        try:
+            table.setRowCount(len(rows))
+
+            for r, row in enumerate(rows):
+                system = ecu_name(row[1])
+
+                shown = (
+                    row[0],
+                    row[1],
+                    system or "not in baseline",
+                    row[2],
+                    row[3],
+                    row[4]
+                )
+
+                for c, value in enumerate(shown):
+                    item = QTableWidgetItem(str(value))
+
+                    if c == 2 and system is None:
+                        item.setForeground(QColor("#FFB547"))
+
+                    if c == 5:
+                        if value == "ALERT":
+                            item.setForeground(QColor("#FF5A66"))
+                            item.setText("●  ALERT")
+
+                        elif value == "RECEIVED":
+                            item.setForeground(QColor("#58B9FF"))
+                            item.setText("●  RECEIVED")
+
+                        else:
+                            item.setForeground(QColor("#35E58B"))
+                            item.setText("●  OK")
+
+                    table.setItem(r, c, item)
+
+        finally:
+            table.setUpdatesEnabled(True)
+            table.setSortingEnabled(sorting_was_enabled)
     # ---------------------------------------------------------------- build
 
     def __init__(self):
         super().__init__()
         self.paused = False
         self._last_rows = None
+        self.live_frames = deque(maxlen=100)
+        self.live_mode = False
+        self.live_ui_timer = QTimer(self)
+        self.live_ui_timer.timeout.connect(self.refresh_live_table)
+        self.live_ui_timer.start(100)
         self.setWindowTitle("CAN-Sentinel Dashboard (mock-up)")
         self.resize(1440, 900)
         self.setMinimumSize(760, 560)
@@ -1053,12 +1230,12 @@ class Dashboard(QMainWindow):
         else:
             mode_text = "DEMO MODE  •  STATIC SAMPLE DATA"
 
-        demo_label = QLabel(mode_text)
-        demo_label.setObjectName("muted")
-        demo_label.setWordWrap(True)
+        self.mode_label = QLabel(mode_text)
+        self.mode_label.setObjectName("muted")
+        self.mode_label.setWordWrap(True)
 
         hero_layout.addWidget(subtitle)
-        hero_layout.addWidget(demo_label)
+        hero_layout.addWidget(self.mode_label)
 
         # ---------------- Three summary cards (click to jump) ----------------
 
@@ -1146,7 +1323,13 @@ class Dashboard(QMainWindow):
             if IS_SAMPLE_ALERT else "Latest alert"
         )
         self.alert_title.setStyleSheet("color: #B7C8DB; font-size: 12px;")
-
+        if IS_SAMPLE_ALERT:
+            self.alert_title.setText(
+                "Latest alert  —  ⚠ SAMPLE DATA (NOT A REAL DETECTION)"
+            )
+            self.alert_title.setStyleSheet(
+                "color: #FFB547; font-size: 12px; font-weight: bold;"
+            )
         alert_detail = QLabel()
         alert_detail.setTextFormat(Qt.TextFormat.RichText)
         alert_detail.setWordWrap(True)
@@ -1378,7 +1561,12 @@ class Dashboard(QMainWindow):
         self.traffic_search.textChanged.connect(self.filter_traffic_table)
 
         self.status_filter = QComboBox()
-        self.status_filter.addItems(["All status", "OK only", "ALERT only"])
+        self.status_filter.addItems([
+            "All status",
+            "OK only",
+            "ALERT only",
+            "RECEIVED only"
+        ])
         self.status_filter.currentIndexChanged.connect(self.filter_traffic_table)
 
         self.pause_button = QPushButton("⏸  Pause refresh")
@@ -1684,7 +1872,15 @@ class Dashboard(QMainWindow):
         QShortcut(QKeySequence("Ctrl+F"), self, activated=self.focus_search)
 
         self.setCentralWidget(root)
-
+        # Live CAN socket receiver
+        self.can_receiver = CANSocketReceiver()
+        self.can_receiver.frame_received.connect(
+            self.handle_live_frame
+        )
+        self.can_receiver.connection_changed.connect(
+            self.handle_connection_status
+        )
+        self.can_receiver.start()
     # ----------------------------------------------------------- interaction
 
     def go_to(self, index):
@@ -1740,21 +1936,39 @@ class Dashboard(QMainWindow):
 
     def filter_traffic_table(self, _arg=None):
         needle = self.traffic_search.text().strip().lower()
-        mode = self.status_filter.currentIndex()  # 0 all, 1 OK, 2 ALERT
+        mode = self.status_filter.currentIndex()
+        # 0 = All, 1 = OK, 2 = ALERT, 3 = RECEIVED
+
         table = self.traffic_table
         shown = 0
+
         for row in range(table.rowCount()):
             status_item = table.item(row, 5)
-            is_alert = bool(status_item and "ALERT" in status_item.text())
-            match = not (mode == 1 and is_alert) and not (mode == 2 and not is_alert)
+            status_text = status_item.text() if status_item else ""
+
+            is_alert = "ALERT" in status_text
+            is_received = "RECEIVED" in status_text
+
+            match = (
+                mode == 0
+                or (mode == 1 and not is_alert and not is_received)
+                or (mode == 2 and is_alert)
+                or (mode == 3 and is_received)
+            )
+
             if match and needle:
                 match = any(
-                    table.item(row, col) and needle in table.item(row, col).text().lower()
+                    table.item(row, col)
+                    and needle in table.item(row, col).text().lower()
                     for col in range(table.columnCount())
                 )
+
             table.setRowHidden(row, not match)
-            shown += match
-        self.traffic_count.setText(f"Showing {shown} of {table.rowCount()} recent rows")
+            shown += int(match)
+
+        self.traffic_count.setText(
+            f"Showing {shown} of {table.rowCount()} recent rows"
+        )
 
     def show_row_detail(self):
         t = self.traffic_table
@@ -1804,7 +2018,13 @@ class Dashboard(QMainWindow):
         font.setPointSizeF(9 * value / 100)
         self.centralWidget().setFont(font)
 
+    def closeEvent(self, event):
+        if hasattr(self, "can_receiver"):
+            self.can_receiver.stop()
+            self.can_receiver.wait(3000)
 
+        event.accept()
+    
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE)
