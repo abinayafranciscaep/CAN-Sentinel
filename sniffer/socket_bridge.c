@@ -88,6 +88,14 @@ int socket_bridge_init(struct socket_bridge *bridge, const char *path)
     }
     bridge->socket_bound = 1;
 
+    /* Restrict socket access to its owner and group. */
+    if (chmod(path, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP) < 0) {
+        perror("chmod Unix socket");
+        close(fd);
+        socket_bridge_cleanup(bridge);
+        return -1;
+    }
+
     if (listen(fd, 4) < 0) {
         perror("listen");
         close(fd);
