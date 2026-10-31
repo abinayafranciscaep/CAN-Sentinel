@@ -703,8 +703,14 @@ class FpsChart(QWidget):
         n = len(self.series)
         if n < 2 or pw <= 0 or ph <= 0:
             p.setPen(QColor("#6F89A7"))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No recorded CSV to chart")
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Waiting for live CAN frames..."
+            )
+            p.end()
             return
+
         hi = (max(self.series) * 1.15) or 1
 
         def xy(i, v):
@@ -958,10 +964,11 @@ class Dashboard(QMainWindow):
     def handle_live_frame(self, frame):
         self.live_frames.append(frame)
         self.live_mode = True
+        self.live_fps_count += 1
+
         self.mode_label.setText(
             "LIVE CAN FEED  •  CONNECTED  |  Receiving frames from CAN sniffer"
         )
-
     def refresh_live_table(self):
         if not self.live_frames:
             return
@@ -978,6 +985,8 @@ class Dashboard(QMainWindow):
           ]
         # Update CAN Traffic table
         self._populate_table(self.traffic_table, rows)
+        # Update system health and CAN ID traffic share from live frames
+        self._update_analysis(rows)
         self.current_rows = rows
         self.filter_traffic_table()
         # Update Overview table with the latest 5 frames
@@ -1020,7 +1029,7 @@ class Dashboard(QMainWindow):
             if recording:
                 rows, fps, filename, clock_steps = recording
                 self.current_recording_name = filename
-                self.current_fps = f"{fps:.0f}"
+                self.current_fps = "0"
                 self.current_clock_steps = clock_steps
                 self.fps_card.value_label.setText(self.current_fps)
                 self.source_status.setText(
@@ -1030,17 +1039,10 @@ class Dashboard(QMainWindow):
                 # selected row or hovered bar is not reset every second.
                 if rows != self._last_rows or force:
                     self._last_rows = list(rows)
-                    self.current_rows = rows
-                    self._populate_table(self.overview_table, rows[-5:])
-                    self._populate_table(self.traffic_table, rows)
-                    self.filter_traffic_table()
-                    self._update_analysis(rows)
-                series, avg = load_fps_series(path)
-                self.fps_chart.set_series(series, avg)
-                if series:
+                if not self.live_mode:
+                    self.fps_chart.set_series([], None)
                     self.chart_stats.setText(
-                        f"average {avg:.0f} fps  |  peak {max(series)} fps  |  "
-                        "hover the graph for per-second values"
+                        "Waiting for live CAN frames..."
                     )
             else:
                 self.source_status.setText(
@@ -1054,7 +1056,37 @@ class Dashboard(QMainWindow):
             print(f"Dashboard refresh error: {e}")
             if hasattr(self, "source_status"):
                 self.source_status.setText(f"Refresh error: {e}")
+    def update_live_fps(self):
+        if not self.live_mode:
+            return
 
+        now = time.monotonic()
+        elapsed = now - self.live_fps_last_tick
+
+        if elapsed < 1.0:
+            return
+
+        fps = self.live_fps_count / elapsed
+        self.live_fps_count = 0
+        self.live_fps_last_tick = now
+
+        self.live_fps_samples.append(fps)
+
+        average_fps = sum(self.live_fps_samples) / len(self.live_fps_samples)
+
+        self.fps_card.value_label.setText(f"{fps:.0f}")
+        self.fps_chart.set_series(
+            list(self.live_fps_samples),
+            average_fps
+        )
+
+        self.chart_stats.setText(
+            f"Live capture | Current: {fps:.0f} FPS | Average: {average_fps:.1f} FPS"
+        )
+
+        self.last_refresh.setText(
+            f"UI refresh: {time.strftime('%H:%M:%S')}"
+        )
     def _update_analysis(self, rows):
         """Render descriptive statistics from recorded CSV rows; no detection inference."""
         if not hasattr(self, "analysis_bars"):
@@ -1159,6 +1191,9 @@ class Dashboard(QMainWindow):
         self._last_rows = None
         self.live_frames = deque(maxlen=100)
         self.live_mode = False
+        self.live_fps_count = 0
+        self.live_fps_last_tick = time.monotonic()
+        self.live_fps_samples = deque(maxlen=300)
         self.live_ui_timer = QTimer(self)
         self.live_ui_timer.timeout.connect(self.refresh_live_table)
         self.live_ui_timer.start(100)
@@ -1404,10 +1439,7 @@ class Dashboard(QMainWindow):
             "color: #E8F2FF; font-size: 14px; font-weight: bold;"
         )
 
-        badge_text = (
-            f"LAST {len(ROWS)} ROWS OF {RECORDING_NAME}  |  ECU SIMULATOR RECORDING"
-            if RECORDING_NAME else "SAMPLE DATA"
-        )
+        badge_text = "LIVE CAN FRAMES ONLY | ECU SIMULATOR RECORDING"
         sample_badge = QLabel(badge_text)
         sample_badge.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
@@ -1454,7 +1486,7 @@ class Dashboard(QMainWindow):
             self.range_group.addButton(b)
             b.clicked.connect(lambda _c, s=seconds: self.fps_chart.set_window(s))
             chart_top.addWidget(b)
-        self.chart_stats = QLabel("No recorded CSV to chart.")
+        self.chart_stats = QLabel("Waiting for live CAN frames...")
         self.chart_stats.setObjectName("muted")
         chart_box.addLayout(chart_top)
         chart_box.addWidget(self.fps_chart, 1)
@@ -1462,7 +1494,7 @@ class Dashboard(QMainWindow):
         traffic_body.addLayout(chart_box, 5)
 
         # Right: compact table (last 5 rows).
-        table = QTableWidget(len(ROWS), 6)
+        table = QTableWidget(0, 6)
         self.overview_table = table
         table.setHorizontalHeaderLabels(
             ["timestamp", "can_id", "system", "dlc", "data_hex", "status"]
@@ -1535,7 +1567,7 @@ class Dashboard(QMainWindow):
         scroll.setWidget(content)
 
         # ---------------- Interactive tabs ----------------
-        self.current_rows = list(ROWS)
+        self.current_rows = []
         self.current_recording_name = RECORDING_NAME
         self.current_fps = FRAMES_PER_SECOND
         self.current_clock_steps = CLOCK_STEPS
@@ -1782,6 +1814,7 @@ class Dashboard(QMainWindow):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(1000)
         self.refresh_timer.timeout.connect(self.refresh_live_data)
+        self.refresh_timer.timeout.connect(self.update_live_fps)
         self.refresh_timer.start()
 
         # ---------------- Zoom controls ----------------
