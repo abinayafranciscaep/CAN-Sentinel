@@ -100,12 +100,16 @@ The table below is the **finalized protocol** taken from the team's design docum
 
 | ECU | CAN ID | Period | DLC | Payload layout | Simulated range |
 | --- | :---: | ---: | :---: | --- | --- |
-| Brake | `0x0A0` | 20 ms | 8 | Byte 0: pressure (0–100); Byte 1: brake switch (0/1); Byte 7: counter | Pressure 0–100 |
-| Steering | `0x0B0` | 10 ms | 8 | Bytes 0–1: signed angle in 0.1° units; Byte 7: counter | −45.0° to +45.0° |
-| Engine RPM | `0x100` | 10 ms | 8 | Bytes 0–1: RPM; Byte 7: counter | 800–4000 RPM |
-| Vehicle Speed | `0x200` | 20 ms | 8 | Byte 0: speed in km/h; Byte 7: counter | 0–130 km/h |
-| Engine Temperature | `0x300` | 100 ms | 8 | Byte 0: raw = °C + 40; Byte 7: counter | 80–105 °C |
-| Infotainment | `0x600` | 100 ms | 8 | Byte 0: status (0/1); Byte 7: counter | Status 0 or 1 |
+| Brake | `0x0A0` | 20 ms | 8 | Byte 0: pressure (0–100); Byte 1: brake switch (0/1); Byte 7: counter | Pressure 0–100; Counter 0–255 |
+| Steering | `0x0B0` | 10 ms | 8 | Bytes 0–1: signed angle in 0.1° units; Byte 7: counter | −45.0° to +45.0°; Counter 0–255 |
+| Engine RPM | `0x100` | 10 ms | 8 | Bytes 0–1: RPM; Byte 7: counter | 800–4000 RPM; Counter 0–255 |
+| Vehicle Speed | `0x200` | 20 ms | 8 | Byte 0: speed in km/h; Byte 7: counter | 0–130 km/h; Counter 0–255 |
+| Engine Temperature | `0x300` | 100 ms | 8 | Byte 0: raw = °C + 40; Byte 7: counter | 80–105 °C; Counter 0–255 |
+| Infotainment | `0x600` | 100 ms | 8 | Byte 0: status (0/1); Byte 7: counter | Status 0 or 1; Counter 0–255 |
+
+> [!NOTE]
+> **Byte 7 Rolling Counter Specification (0–255):**
+> Every transmitted frame dedicates **Byte 7 (8 bits, `uint8_t`)** to an independent sequential rolling counter with an explicit range of **`0 – 255` (`0x00` – `0xFF`)**, wrapping from `255 → 0` (`0xFF → 0x00`). It does **not** use a 4-bit nibble (`0–15`). Each of the six ECUs maintains its own independent counter progression.
 
 > [!NOTE]
 > The CAN identifiers are simulation-specific and defined for the CAN-Sentinel virtual environment. They do not represent a production vehicle CAN database. The diagnostic identifier `0x7DF` is event-driven and is intentionally **excluded** from the six-frame periodic baseline.

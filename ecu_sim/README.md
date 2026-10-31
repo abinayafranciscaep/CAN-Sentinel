@@ -203,12 +203,16 @@ independent rolling counter (0-255, wrapping to 0) for each ECU.
 
 | CAN ID | Payload fields | Simulated range |
 |---|---|---|
-| `0x0A0` | Byte 0: brake pressure; byte 1: brake switch (0 = off, 1 = on); byte 7: counter | Pressure 0-100 |
-| `0x0B0` | Bytes 0-1: signed steering angle in 0.1 degree units; byte 7: counter | -45.0 to +45.0 degrees (-450 to +450) |
-| `0x100` | Bytes 0-1: engine RPM; byte 7: counter | 800-4000 RPM |
-| `0x200` | Byte 0: vehicle speed in km/h; byte 7: counter | 0-130 km/h |
-| `0x300` | Byte 0: engine temperature as degrees C + 40; byte 7: counter | 80-105 degrees C |
-| `0x600` | Byte 0: infotainment status; byte 7: counter | 0 or 1 |
+| `0x0A0` | Byte 0: brake pressure; byte 1: brake switch (0 = off, 1 = on); byte 7: counter | Pressure 0-100; Counter 0-255 |
+| `0x0B0` | Bytes 0-1: signed steering angle in 0.1 degree units; byte 7: counter | -45.0 to +45.0 degrees (-450 to +450); Counter 0-255 |
+| `0x100` | Bytes 0-1: engine RPM; byte 7: counter | 800-4000 RPM; Counter 0-255 |
+| `0x200` | Byte 0: vehicle speed in km/h; byte 7: counter | 0-130 km/h; Counter 0-255 |
+| `0x300` | Byte 0: engine temperature as degrees C + 40; byte 7: counter | 80-105 degrees C; Counter 0-255 |
+| `0x600` | Byte 0: infotainment status; byte 7: counter | Status 0 or 1; Counter 0-255 |
+
+> [!NOTE]
+> **Byte 7 Counter Range Clarification:**
+> Byte 7 carries an independent 8-bit unsigned integer (`uint8_t`) rolling counter with an explicit range of **`0 to 255` (`0x00` to `0xFF`)**, wrapping from `255 → 0`. It does **not** use a 4-bit nibble (`0–15`). Each ECU increments its counter independently per frame.
 
 Every signal is clamped to its range before encoding, so normal traffic never contains
 out-of-range values that the detection engine could mistake for an attack.
