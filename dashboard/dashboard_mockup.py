@@ -959,11 +959,34 @@ class CANSocketReceiver(QThread):
 
 class Dashboard(QMainWindow):
     TAB_OVERVIEW, TAB_TRAFFIC, TAB_ALERTS = 0, 1, 2
-
+    
+    def update_live_labels(self, connected):
+        if connected:
+            self.setWindowTitle("CAN-Sentinel Dashboard (LIVE)")
+            self.footer_label.setText(
+                "CAN-SENTINEL  •  AUTOMOTIVE SECURITY MONITORING"
+                "  |  CONNECTED TO LIVE CAN"
+            )
+            self.source_status.setText(
+                f"Live CAN feed | {len(self.live_frames)} frames buffered"
+            )
+            self.traffic_hint.setText(
+                "Live CAN frames received from the connected sniffer."
+            )
+            self.traffic_badge.setText("LIVE CAN FRAMES ONLY | ECU SIMULATOR (LIVE)")
+        else:
+            self.setWindowTitle("CAN-Sentinel Dashboard (RECORDED)")
+            self.footer_label.setText(
+                "CAN-SENTINEL  •  AUTOMOTIVE SECURITY MONITORING"
+                "  |  RECORDED DATA MODE"
+            )
+            self.traffic_hint.setText("Recorded CSV rows only.")
+            self.traffic_badge.setText("RECORDED DATA MODE")
     # ------------------------------------------------------------------ data
     def handle_live_frame(self, frame):
         self.live_frames.append(frame)
         self.live_mode = True
+        self.update_live_labels(connected=True)
         self.live_fps_count += 1
 
         self.mode_label.setText(
@@ -1001,10 +1024,12 @@ class Dashboard(QMainWindow):
         print(f"[SOCKET DEBUG] connected={connected}, message={message}")
 
         if connected:
+            self.update_live_labels(connected=True)
             self.mode_label.setText(
                 "LIVE CAN FEED  •  CONNECTED  |  Connected to CAN sniffer"
             )
         else:
+            self.update_live_labels(connected=False)
             self.mode_label.setText(
                 "LIVE CAN FEED  •  DISCONNECTED  |  Waiting for CAN sniffer"
             )
@@ -1197,7 +1222,7 @@ class Dashboard(QMainWindow):
         self.live_ui_timer = QTimer(self)
         self.live_ui_timer.timeout.connect(self.refresh_live_table)
         self.live_ui_timer.start(100)
-        self.setWindowTitle("CAN-Sentinel Dashboard (mock-up)")
+        self.setWindowTitle("CAN-Sentinel Dashboard (RECORDED)")
         self.resize(1440, 900)
         self.setMinimumSize(760, 560)
 
@@ -1440,11 +1465,11 @@ class Dashboard(QMainWindow):
         )
 
         badge_text = "LIVE CAN FRAMES ONLY | ECU SIMULATOR RECORDING"
-        sample_badge = QLabel(badge_text)
-        sample_badge.setSizePolicy(
+        self.traffic_badge = QLabel(badge_text)
+        self.traffic_badge.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
         )
-        sample_badge.setStyleSheet(
+        self.traffic_badge.setStyleSheet(
             "color: #8FA9C5;"
             "background-color: #172D46;"
             "padding: 5px 8px;"
@@ -1460,7 +1485,7 @@ class Dashboard(QMainWindow):
         traffic_heading.addWidget(traffic_icon)
         traffic_heading.addWidget(traffic_title)
         traffic_heading.addStretch(1)
-        traffic_heading.addWidget(sample_badge)
+        traffic_heading.addWidget(self.traffic_badge)
         traffic_heading.addWidget(self.table_toggle)
 
         traffic_layout.addLayout(traffic_heading)
@@ -1555,14 +1580,14 @@ class Dashboard(QMainWindow):
         traffic_layout.addLayout(traffic_body)
         page.addWidget(traffic_card)
 
-        footer = QLabel(
+        self.footer_label = QLabel(
             "CAN-SENTINEL  •  AUTOMOTIVE SECURITY MONITORING CONCEPT"
-            "  |  NOT CONNECTED TO LIVE CAN"
+            "  |  RECORDED DATA MODE"
         )
-        footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        footer.setStyleSheet("color: #6F89A7; font-size: 10px;")
+        self.footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.footer_label.setStyleSheet("color: #6F89A7; font-size: 10px;")
 
-        page.addWidget(footer)
+        page.addWidget(self.footer_label)
 
         scroll.setWidget(content)
 
@@ -1584,8 +1609,8 @@ class Dashboard(QMainWindow):
         traffic_layout2.setSpacing(10)
         traffic_title2 = QLabel("CAN Traffic Explorer")
         traffic_title2.setStyleSheet("font-size: 20px; font-weight: bold; color: #FFFFFF;")
-        traffic_hint = QLabel("Recorded CSV rows only — this view does not connect to a live CAN bus.")
-        traffic_hint.setObjectName("muted")
+        self.traffic_hint = QLabel("Recorded CSV rows only.")
+        self.traffic_hint.setObjectName("muted")
 
         self.traffic_search = QLineEdit()
         self.traffic_search.setPlaceholderText("Filter by CAN ID, ECU/system, status, or data hex…")
@@ -1638,7 +1663,7 @@ class Dashboard(QMainWindow):
         self.traffic_count.setObjectName("muted")
 
         traffic_layout2.addWidget(traffic_title2)
-        traffic_layout2.addWidget(traffic_hint)
+        traffic_layout2.addWidget(self.traffic_hint)
         traffic_layout2.addLayout(controls)
         traffic_layout2.addWidget(self.traffic_table, 1)
         traffic_layout2.addWidget(self.traffic_count)
