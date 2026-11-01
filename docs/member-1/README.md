@@ -49,6 +49,7 @@
     - [Step 12.6: Real-Time Web-Based EV Sport Dashboard (Porsche Taycan / Audi e-tron Style)](#step-126-real-time-web-based-ev-sport-dashboard-porsche-taycan--audi-e-tron-style)
     - [Step 12.7: Dynamic PRND Transmission & Automatic Gear Indicator](#step-127-dynamic-prnd-transmission--automatic-gear-indicator)
     - [Step 12.8: Simultaneous Live Telemetry Feed & In-Place Diagnostic Logging](#step-128-simultaneous-live-telemetry-feed--in-place-diagnostic-logging)
+- [Step 13: WSL 2 Custom Kernel Environment Setup and Verification](#step-13-wsl-2-custom-kernel-environment-setup-and-verification)
 - [Known Limitations](#known-limitations)
 - [Expected Outcome](#expected-outcome)
 - [Next Steps](#next-steps)
@@ -187,28 +188,38 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Step 12.6: real-time web-based EV sport dashboard (`make dashboard`) | ✅ Done |
 | Step 12.7: dynamic PRND transmission & automatic gear indicator | ✅ Done |
 | Step 12.8: simultaneous live telemetry feed & in-place diagnostic logging (`--log`) | ✅ Done |
+| Step 13: Windows 11 WSL 2 custom kernel SocketCAN environment & cross-verification | ✅ Done |
 
 ## Development Workflow and Repository Layout
 
-The project uses two environments with separate responsibilities.
+The project supports two verified Linux execution environments alongside the Windows host:
 
-| Environment | Role |
-| --- | --- |
-| **Windows host** (VS Code and PowerShell) | Holds the Git clone. Source editing, protocol review, documentation, and all Git operations are done here. |
-| **Kali Linux VM** | Compiles and tests the simulator against `vcan0`. No Git operations are performed here. |
+| Environment | Role & Description | Reference / Setup |
+| --- | --- | --- |
+| **Windows host** (VS Code and PowerShell) | Holds the primary Git repository. Source editing, protocol review, documentation, and all Git operations are done here. | Primary repository workspace |
+| **Kali Linux VM** (VirtualBox / VMware) | Traditional full Linux virtual machine running Kali. Compiles and tests the simulator against `vcan0`. | [Step 1](#step-1-prepare-the-kali-linux-environment) & [Step 2](#step-2-create-the-vcan0-interface-and-test-can-communication) |
+| **Windows 11 WSL 2** (Kali Linux) | High-performance, lightweight Linux environment directly integrated with the Windows host via a custom SocketCAN-enabled kernel (`CONFIG_CAN=y`, `CONFIG_CAN_RAW=y`, `CONFIG_CAN_VCAN=m`). Enables instant host browser access for the digital dashboard (`http://localhost:8080`). | Dedicated [WSL 2 Custom Kernel Setup Guide](wsl2_setup.md) |
 
-The simulator was first prototyped directly in the Kali workspace (Step 3). From Step 4 onward the repository copy on Windows is the single source of truth: it is edited in VS Code, copied to Kali, and compiled and tested there.
+The simulator was first prototyped directly in the Kali workspace (Step 3). From Step 4 onward the repository copy on Windows is the single source of truth: it is edited in VS Code, synchronized to either Kali VM or WSL 2, and compiled and tested there.
 
 ```text
 Windows host: D:\Study\Projects\CAN-Sentinel        (Git repository, branch member-1)
+├── docs/member-1/
+│   ├── README.md                          # Comprehensive Member 1 guide and lab reports
+│   └── wsl2_setup.md                      # Dedicated WSL 2 custom kernel SocketCAN setup guide
 └── ecu_sim/
     ├── .gitkeep
     ├── ecu_simulator.c                    # Six-ECU SocketCAN simulator
+    ├── test_payloads.c                    # Automated unit verification suite
+    ├── can_sentinel.dbc                   # Vector DBC specification
+    ├── Makefile                           # Unified build and dashboard runner
     └── README.md                          # ECU simulator build and run guide
 
-Kali VM: ~/CAN-Sentinel/ecu-simulator               (compile/test workspace, not a Git clone)
+Execution Workspaces (Kali VM or WSL 2):
 ├── ecu_simulator.c                        # Copy of the repository source
-└── ecu_simulator                          # Compiled executable
+├── test_payloads.c                        # Test runner source
+├── Makefile                               # Build automation
+└── ecu_simulator                          # Compiled SocketCAN binary
 ```
 
 > [!NOTE]
@@ -233,7 +244,8 @@ Each step lists the commands executed, their purpose, the verification output, a
 | [9](#step-9-commit-and-push-the-final-source) | Commit and push the final source | Windows | — | Git |
 | [10](#step-10-improve-signal-realism-and-reproducibility) | Fix signal update rate, link RPM to speed, add a seed option | Kali (+ Windows) | 24–37 | `nano`, `gcc`, `candump`, `grep`, `sha256sum`, Git |
 | [11](#step-11-record-the-three-10-minute-baseline-datasets) | Record three 10-minute baseline datasets with Member 3 | Kali | 38 | simulator, logger, validator |
-| [12](#step-12-automated-payload-tests-week-3) | Automated payload tests | Kali | — | `gcc`, test program |
+| [12](#step-12-automated-payload-tests-week-3) | Automated payload tests & advanced features (12.1–12.8) | Kali | 40–47 | `gcc`, test program, ANSI, WebSocket |
+| [13](#step-13-wsl-2-custom-kernel-environment-setup-and-verification) | WSL 2 custom kernel SocketCAN setup & cross-platform verification | Windows 11 WSL 2 | 48–50 | `WSL 2`, `vcan0`, `can-utils`, `gcc`, Browser |
 
 ---
 
@@ -3195,6 +3207,115 @@ The dashboard decouples low-level Linux kernel CAN networking from high-fidelity
 
 ---
 
+## Step 13: WSL 2 Custom Kernel Environment Setup and Verification
+
+### 1. Motivation & Multi-Environment Strategy
+
+To ensure high reproducibility and provide a rapid, resource-efficient development environment, the project was verified across two independent Linux runtime platforms:
+1. **Kali Linux VM (VirtualBox):** Full hypervisor virtualization simulating an isolated, physical in-vehicle ECU gateway.
+2. **Windows 11 WSL 2 (Kali Linux):** High-performance, lightweight Linux execution layer directly sharing host RAM and the Windows filesystem (`D:\Project Workspace\CAN-Sentinel`).
+
+Standard Microsoft WSL 2 kernels intentionally disable CAN bus networking (`CONFIG_CAN=n`, `CONFIG_CAN_RAW=n`, `CONFIG_CAN_VCAN=n`), causing `modprobe vcan` to return `FATAL: Module vcan not found`. To establish native SocketCAN capability under Windows 11 without a heavy virtual machine, a tailored WSL 2 kernel was built and deployed.
+
+> [!NOTE]
+> A complete, standalone step-by-step setup guide with full kernel build flags, dependency packages, and `.wslconfig` syntax is available in [WSL 2 Custom Kernel Setup Guide](wsl2_setup.md).
+
+---
+
+### 2. Implementation & Activation Procedure
+
+#### 2.1 Custom Kernel Configuration & Deployment
+1. Cloned Microsoft's WSL 2 Linux kernel source tree.
+2. Applied running configuration (`zcat /proc/config.gz > .config`) and enabled SocketCAN subsystems:
+   ```bash
+   ./scripts/config --enable CONFIG_CAN
+   ./scripts/config --enable CONFIG_CAN_RAW
+   ./scripts/config --enable CONFIG_CAN_VCAN
+   ```
+3. Compiled kernel (`make -j$(nproc)`) and modules (`sudo make modules_install`).
+4. Exported compiled `vmlinux` to Windows host (`C:\Users\abdul\vmlinux-wsl2-can`).
+5. Configured Windows `C:\Users\abdul\.wslconfig`:
+   ```ini
+   [wsl2]
+   kernel=C:\\Users\\abdul\\vmlinux-wsl2-can
+   ```
+6. Restarted WSL via PowerShell (`wsl --shutdown`) and verified active custom kernel:
+   ```bash
+   uname -a
+   # Linux ABDU 6.18.58.1-microsoft-standard-WSL2+ #1 SMP PREEMPT_DYNAMIC ...
+   ```
+
+#### 2.2 Activating the Virtual CAN Interface (`vcan0`)
+```bash
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+ip link show vcan0
+```
+
+```text
+3: vcan0: <NOARP,UP,LOWER_UP> mtu 2060 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/can
+```
+
+![WSL2 vcan0 Interface Active](screenshots/48-wsl2-vcan0-interface-active.png)
+
+**Screenshot 48:** WSL 2 Kali Linux terminal verifying `ip link show vcan0` reporting the virtual bus interface as `UP` with `link/can` and MTU 2060 under the custom SocketCAN-enabled kernel.
+
+---
+
+### 3. Verification & Live Execution Results
+
+#### 3.1 Automated Protocol & Payload Tests
+Navigated to the repository workspace and executed the unified test suite:
+```bash
+cd ecu_sim
+make clean && make
+make test
+```
+
+```text
+====================================================
+   CAN-Sentinel Automated Payload & Protocol Tests
+====================================================
+
+[PASS] Test 1: Frame Format (All 6 IDs, DLC 8, reserved bytes 0x00)
+[PASS] Test 2: Counter Progression & Wrap-around (255 -> 0)
+[PASS] Test 3: Steering Angle Encoding (-45.0 to +45.0 deg signed)
+[PASS] Test 4: Engine Temperature Encoding (+40 offset, 80-105 C)
+[PASS] Test 5: Brake Pressure & Switch Dynamic Coupling (0-100)
+[PASS] Test 6: Engine RPM & Vehicle Speed Coupling (RPM = 800 + speed*25)
+[PASS] Test 7: Deterministic Seed Reproducibility (Identical payloads)
+
+====================================================
+Results: 7 / 7 tests passed (0 failed).
+====================================================
+```
+
+#### 3.2 Multi-Threaded ECU Simulator Execution
+Ran the 6-ECU simulator streaming baseline traffic on `vcan0` while monitoring packets in a parallel terminal:
+* **Terminal 1:** `./ecu_simulator`
+* **Terminal 2:** `candump vcan0`
+
+![WSL2 ECU Simulator and candump Live Traffic](screenshots/49-wsl2-ecu-simulator-live-tra.png)
+
+**Screenshot 49:** Split-pane terminal inside WSL 2 running `./ecu_simulator` transmitting multi-threaded baseline traffic at 320 frames/s on the left pane and `candump vcan0` capturing live CAN frames (`0x0A0`, `0x0B0`, `0x100`, `0x200`, `0x300`, `0x600`) with independent rolling counters (`0–255`) on the right pane.
+
+#### 3.3 Live Web EV Sport Dashboard Integration
+Launched the WebSocket telemetry bridge in WSL 2:
+```bash
+make dashboard
+```
+Because WSL 2 automatically bridges localhost ports to the Windows host, the dashboard is immediately accessible in Windows Chrome / Edge at `http://localhost:8080`:
+
+![WSL2 EV Sport Digital Dashboard Live in Host Browser](screenshots/50-wsl2-ev-sport-dashboard-liv.png)
+
+**Screenshot 50:** Windows 11 host browser (Chrome) rendering the real-time EV Sport Digital Dashboard at `http://localhost:8080`, receiving 60 FPS live telemetry directly from the WSL 2 SocketCAN bus with swept tachometer/speedometer radial dials, dynamic steering articulation, and live physical bus load meter.
+
+**Result:** Step 13 successfully establishes dual-platform validation for CAN-Sentinel. All C simulation code, DBC decoders, automated unit tests, and WebSocket visualization tools operate seamlessly across both VirtualBox VMs and native Windows 11 WSL 2.
+
+---
+
 ## Known Limitations
 
 - Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
@@ -3218,3 +3339,4 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 
 1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
 2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, and simultaneous rolling telemetry logging in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, and 12.8) complete.
+3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.

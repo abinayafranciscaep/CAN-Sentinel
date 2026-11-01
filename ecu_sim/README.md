@@ -47,12 +47,14 @@ Stop the simulator with `Ctrl+C`. It exits cleanly and prints a confirmation mes
 
 ---
 
-## Prerequisites
+## Prerequisites & Supported Environments
 
-- Kali Linux (or another Linux distribution with SocketCAN support)
-- GCC
-- `can-utils` (for `candump` and `cansend`)
-- An active `vcan0` interface
+The simulator requires a Linux environment with SocketCAN kernel support, GCC, and `can-utils`:
+
+| Environment | Description | Setup Guide |
+|---|---|---|
+| **VirtualBox / VMware VM** | Traditional Kali Linux or Ubuntu virtual machine with native SocketCAN | Standard Linux package installation (`apt install can-utils gcc`) |
+| **Windows 11 WSL 2** | Fast, lightweight Linux environment directly integrated with Windows host | Complete step-by-step [WSL 2 Custom Kernel Setup Guide](../docs/member-1/wsl2_setup.md) |
 
 ```bash
 sudo apt update
@@ -71,6 +73,10 @@ ip link show vcan0
 `ip link show vcan0` should report the interface as `UP`. If `ip link add` reports
 `File exists`, the interface is already configured and only `ip link set up vcan0` is
 needed. `vcan0` is not persistent and must be recreated after a reboot.
+
+> [!TIP]
+> **Developing on Windows with WSL 2:**  
+> If using WSL 2 on Windows 11, the default Microsoft WSL kernel has CAN disabled. Follow our verified [WSL 2 Custom Kernel Setup Guide](../docs/member-1/wsl2_setup.md) to compile a custom WSL2 kernel with `CONFIG_CAN` and run the entire simulator, test suite, and EV sport web dashboard natively on Windows in seconds!
 
 ## Compile
 
