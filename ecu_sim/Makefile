@@ -41,12 +41,12 @@ setup-vcan:
 
 # Launch the real-time Web-Based EV Sport Dashboard bridge
 dashboard:
-	@if [ -f "bridge.py" ]; then \
-		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
-		python3 bridge.py --interface vcan0 --port 8080; \
-	elif [ -f "dashboard/bridge.py" ]; then \
+	@if [ -f "dashboard/bridge.py" ]; then \
 		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
 		python3 dashboard/bridge.py --interface vcan0 --port 8080; \
+	elif [ -f "bridge.py" ]; then \
+		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
+		python3 bridge.py --interface vcan0 --port 8080; \
 	elif [ -f "../docs/member-1/dashboard/bridge.py" ]; then \
 		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
 		python3 ../docs/member-1/dashboard/bridge.py --interface vcan0 --port 8080; \
@@ -54,7 +54,7 @@ dashboard:
 		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
 		python3 docs/member-1/dashboard/bridge.py --interface vcan0 --port 8080; \
 	else \
-		echo "Error: bridge.py not found in current directory or docs/member-1/dashboard."; \
+		echo "Error: bridge.py not found in dashboard/ or current directory."; \
 		exit 1; \
 	fi
 

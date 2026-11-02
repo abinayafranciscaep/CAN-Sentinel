@@ -290,43 +290,79 @@ static void make_gauge_bar(char *buf, size_t buf_sz, int val, int min_val, int m
     int filled = (max_val > min_val) ? ((clamped - min_val) * width / (max_val - min_val)) : 0;
     if (filled > width) filled = width;
 
-    int pos = snprintf(buf, buf_sz, "%s[", color);
-    for (int i = 0; i < width && (size_t)pos < buf_sz - 8; i++) {
+    int pos = snprintf(buf, buf_sz, "%s[%s", ANSI_GRAY, color);
+    for (int i = 0; i < width && (size_t)pos < buf_sz - 16; i++) {
+        if (i == filled) {
+            pos += snprintf(buf + pos, buf_sz - pos, "%s", ANSI_GRAY);
+        }
         if (i < filled) {
             pos += snprintf(buf + pos, buf_sz - pos, "█");
         } else {
-            pos += snprintf(buf + pos, buf_sz - pos, "░");
+            pos += snprintf(buf + pos, buf_sz - pos, "━");
         }
     }
-    snprintf(buf + pos, buf_sz - pos, "]%s", ANSI_RESET);
+    snprintf(buf + pos, buf_sz - pos, "%s]%s", ANSI_GRAY, ANSI_RESET);
 }
 
+/* Multi-segment LED Rev Bar (Automotive F1 / GT3 Shift Lights - Continuous Solid Blocks) */
+static void make_rpm_led_bar(char *buf, size_t buf_sz, int rpm, int min_rpm, int max_rpm, int width)
+{
+    int clamped = clamp_int(rpm, min_rpm, max_rpm);
+    int filled = (max_rpm > min_rpm) ? ((clamped - min_rpm) * width / (max_rpm - min_rpm)) : 0;
+    if (filled > width) filled = width;
+
+    int pos = snprintf(buf, buf_sz, "%s[", ANSI_GRAY);
+    int cur_color_id = -1; /* 0: green, 1: yellow, 2: red, 3: gray */
+
+    for (int i = 0; i < width && (size_t)pos < buf_sz - 16; i++) {
+        if (i < filled) {
+            int col_id = (i < 12) ? 0 : (i < 18) ? 1 : 2;
+            if (col_id != cur_color_id) {
+                const char *esc = (col_id == 0) ? ANSI_GREEN : (col_id == 1) ? ANSI_YELLOW : ANSI_RED;
+                pos += snprintf(buf + pos, buf_sz - pos, "%s", esc);
+                cur_color_id = col_id;
+            }
+            pos += snprintf(buf + pos, buf_sz - pos, "█");
+        } else {
+            if (cur_color_id != 3) {
+                pos += snprintf(buf + pos, buf_sz - pos, "%s", ANSI_GRAY);
+                cur_color_id = 3;
+            }
+            pos += snprintf(buf + pos, buf_sz - pos, "━");
+        }
+    }
+    snprintf(buf + pos, buf_sz - pos, "%s]%s", ANSI_GRAY, ANSI_RESET);
+}
+
+/* Horizon Precision Steering Angle Dial with Center Notch & Turn Arrows */
 static void make_steer_bar(char *buf, size_t buf_sz, int angle_deci, int width, const char *color)
 {
     int center = width / 2;
-    int offset = (angle_deci * center) / 450;
-    if (offset < -center) offset = -center;
-    if (offset > center) offset = center;
+    int max_offset = center - 1;
+    int offset = (angle_deci * max_offset) / 450;
+    if (offset < -max_offset) offset = -max_offset;
+    if (offset > max_offset) offset = max_offset;
     int mark = center + offset;
 
-    char bar[40];
-    if (width >= (int)sizeof(bar)) width = sizeof(bar) - 1;
-    memset(bar, ' ', width);
-    bar[width] = '\0';
-
-    if (offset < 0) {
-        bar[mark] = '<';
-        for (int i = mark + 1; i < center; i++) bar[i] = '-';
-        bar[center] = 'o';
-    } else if (offset > 0) {
-        bar[center] = 'o';
-        for (int i = center + 1; i < mark; i++) bar[i] = '-';
-        bar[mark] = '>';
-    } else {
-        bar[center] = 'o';
+    int pos = snprintf(buf, buf_sz, "%s[", ANSI_GRAY);
+    for (int i = 0; i < width && (size_t)pos < buf_sz - 16; i++) {
+        if (i == mark) {
+            pos += snprintf(buf + pos, buf_sz - pos, "%s●%s", color, ANSI_GRAY);
+        } else if (offset < 0 && i > mark && i < center) {
+            pos += snprintf(buf + pos, buf_sz - pos, "%s◄%s", color, ANSI_GRAY);
+        } else if (offset > 0 && i > center && i < mark) {
+            pos += snprintf(buf + pos, buf_sz - pos, "%s►%s", color, ANSI_GRAY);
+        } else if (i == 0) {
+            pos += snprintf(buf + pos, buf_sz - pos, "◄");
+        } else if (i == width - 1) {
+            pos += snprintf(buf + pos, buf_sz - pos, "►");
+        } else if (i == center) {
+            pos += snprintf(buf + pos, buf_sz - pos, "│");
+        } else {
+            pos += snprintf(buf + pos, buf_sz - pos, "─");
+        }
     }
-
-    snprintf(buf, buf_sz, "%s[%s]%s", color, bar, ANSI_RESET);
+    snprintf(buf + pos, buf_sz - pos, "%s]%s", ANSI_GRAY, ANSI_RESET);
 }
 
 static void render_dashboard_cluster(const TelemetrySnapshot *s)
@@ -334,19 +370,74 @@ static void render_dashboard_cluster(const TelemetrySnapshot *s)
     int minutes = (int)(s->elapsed_s / 60.0);
     int seconds = (int)(s->elapsed_s) % 60;
 
-    char speed_bar[128];
-    char rpm_bar[128];
-    char brake_bar[128];
-    char steer_bar[128];
-    char temp_bar[128];
-    char dur_bar[128];
+    char speed_bar[256];
+    char rpm_bar[256];
+    char brake_bar[256];
+    char steer_bar[256];
+    char temp_bar[256];
+    char dur_bar[256];
 
-    make_gauge_bar(speed_bar, sizeof(speed_bar), s->speed_kmh, 0, 130, 24, ANSI_GREEN);
-    make_gauge_bar(rpm_bar, sizeof(rpm_bar), s->rpm, 800, 4000, 24, ANSI_BLUE);
-    make_gauge_bar(brake_bar, sizeof(brake_bar), s->brake_pressure, 0, 100, 24,
-                   (s->brake_switch ? ANSI_YELLOW : ANSI_GRAY));
-    make_steer_bar(steer_bar, sizeof(steer_bar), s->steer_deci, 24, ANSI_CYAN);
-    make_gauge_bar(temp_bar, sizeof(temp_bar), s->engine_temp, 80, 105, 24, ANSI_MAGENTA);
+    /* Dynamic Color & Threshold Evaluation */
+    const char *speed_color = ANSI_GREEN;
+    const char *speed_badge = "(City Zone)     ";
+    if (s->speed_kmh > 100) {
+        speed_color = ANSI_YELLOW;
+        speed_badge = "[⚡ HIGH SPEED]  ";
+    } else if (s->speed_kmh > 60) {
+        speed_color = ANSI_CYAN;
+        speed_badge = "(Highway Cruise)";
+    }
+
+    const char *rpm_color = ANSI_BLUE;
+    const char *rpm_badge = "(Cruise: Nominal)";
+    if (s->rpm >= 3200) {
+        rpm_color = ANSI_RED;
+        rpm_badge = "[⚠ REDLINE LIMIT]";
+    } else if (s->rpm >= 2400) {
+        rpm_color = ANSI_YELLOW;
+        rpm_badge = "[HIGH LOAD ZONE] ";
+    }
+
+    const char *brake_color = ANSI_GRAY;
+    const char *brake_badge = "[○ RELEASED]     ";
+    if (s->brake_switch) {
+        if (s->brake_pressure > 50) {
+            brake_color = ANSI_RED;
+            brake_badge = "[🚨 HARD BRAKE]  ";
+        } else {
+            brake_color = ANSI_YELLOW;
+            brake_badge = "[● BRAKE ENGAGED]";
+        }
+    }
+
+    const char *steer_color = ANSI_CYAN;
+    const char *turn_str = "Straight  ";
+    if (s->steer_deci < -15) {
+        turn_str = "Left Turn ";
+        steer_color = (s->steer_deci < -35) ? ANSI_YELLOW : ANSI_GREEN;
+    } else if (s->steer_deci > 15) {
+        turn_str = "Right Turn";
+        steer_color = (s->steer_deci > 35) ? ANSI_YELLOW : ANSI_GREEN;
+    }
+
+    const char *temp_color = ANSI_GREEN;
+    const char *temp_badge = "[COOLANT NOMINAL]";
+    if (s->engine_temp > 102) {
+        temp_color = ANSI_RED;
+        temp_badge = "[🔥 OVERHEAT WARN]";
+    } else if (s->engine_temp > 98) {
+        temp_color = ANSI_YELLOW;
+        temp_badge = "[⚠ ELEVATED TEMP]";
+    } else if (s->engine_temp < 85) {
+        temp_color = ANSI_BLUE;
+        temp_badge = "[WARMUP PHASE]   ";
+    }
+
+    make_gauge_bar(speed_bar, sizeof(speed_bar), s->speed_kmh, 0, 130, 24, speed_color);
+    make_rpm_led_bar(rpm_bar, sizeof(rpm_bar), s->rpm, 800, 4000, 24);
+    make_gauge_bar(brake_bar, sizeof(brake_bar), (s->brake_switch ? s->brake_pressure : 0), 0, 100, 24, brake_color);
+    make_steer_bar(steer_bar, sizeof(steer_bar), s->steer_deci, 24, steer_color);
+    make_gauge_bar(temp_bar, sizeof(temp_bar), s->engine_temp, 80, 105, 24, temp_color);
 
     int dur_pct = 0;
     if (s->duration_sec > 0) {
@@ -354,23 +445,19 @@ static void render_dashboard_cluster(const TelemetrySnapshot *s)
         if (dur_pct > 100) dur_pct = 100;
         make_gauge_bar(dur_bar, sizeof(dur_bar), dur_pct, 0, 100, 14, ANSI_WHITE);
     } else {
-        snprintf(dur_bar, sizeof(dur_bar), "[  CONTINUOUS RUN  ]");
+        snprintf(dur_bar, sizeof(dur_bar), "%s[  CONTINUOUS RUN  ]%s", ANSI_GRAY, ANSI_RESET);
     }
-
-    const char *turn_str = "Straight  ";
-    if (s->steer_deci < -15) turn_str = "Left Turn ";
-    else if (s->steer_deci > 15) turn_str = "Right Turn";
 
     /* Transmission Gear & Drive Mode Calculation */
     char gear_badge[128];
     char mode_desc[64];
     if (s->speed_kmh == 0) {
         if (s->brake_switch) {
-            snprintf(gear_badge, sizeof(gear_badge), "%s[►P◄]%s  %s[ R ]  [ N ]  [ D ]%s",
+            snprintf(gear_badge, sizeof(gear_badge), "%s◄[ P ]►%s  %s( R )  ( N )  ( D )%s",
                      ANSI_YELLOW, ANSI_RESET, ANSI_GRAY, ANSI_RESET);
             snprintf(mode_desc, sizeof(mode_desc), "%s[PARK ENGAGED] %s", ANSI_YELLOW, ANSI_RESET);
         } else {
-            snprintf(gear_badge, sizeof(gear_badge), "%s[ P ]  [ R ]%s  %s[►N◄]%s  %s[ D ]%s",
+            snprintf(gear_badge, sizeof(gear_badge), "%s( P )  ( R )%s  %s◄[ N ]►%s  %s( D )%s",
                      ANSI_GRAY, ANSI_RESET, ANSI_CYAN, ANSI_RESET, ANSI_GRAY, ANSI_RESET);
             snprintf(mode_desc, sizeof(mode_desc), "%s[NEUTRAL IDLE] %s", ANSI_CYAN, ANSI_RESET);
         }
@@ -382,7 +469,7 @@ static void render_dashboard_cluster(const TelemetrySnapshot *s)
         else if (s->speed_kmh < 105) g = 4;
         else g = 5;
 
-        snprintf(gear_badge, sizeof(gear_badge), "%s[ P ]  [ R ]  [ N ]%s  %s[►D%d]%s",
+        snprintf(gear_badge, sizeof(gear_badge), "%s( P )  ( R )  ( N )%s  %s◄[ D%d ]►%s",
                  ANSI_GRAY, ANSI_RESET, ANSI_GREEN, g, ANSI_RESET);
         snprintf(mode_desc, sizeof(mode_desc), "%s[FORWARD D-%d]  %s", ANSI_GREEN, g, ANSI_RESET);
     }
@@ -417,32 +504,32 @@ static void render_dashboard_cluster(const TelemetrySnapshot *s)
     printf("%s│%s  GEAR  : %s   DRIVE MODE: %s%*s\033[90G%s│%s\033[K\n",
            ANSI_CYAN, ANSI_RESET, gear_badge, mode_desc,
            22, "", ANSI_CYAN, ANSI_RESET);
+    printf("%s│%*s\033[90G%s│%s\033[K\n", ANSI_CYAN, 88, "", ANSI_CYAN, ANSI_RESET);
 
-    printf("%s│%s  SPEED : %s  %s%3d km/h%s  (Range: 0-130 km/h)%*s\033[90G%s│%s\033[K\n",
-           ANSI_CYAN, ANSI_RESET, speed_bar, ANSI_GREEN, s->speed_kmh, ANSI_RESET,
-           21, "", ANSI_CYAN, ANSI_RESET);
+    printf("%s│%s  SPEED : %s  %s%3d km/h%s  %s%s%s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, speed_bar, speed_color, s->speed_kmh, ANSI_RESET,
+           speed_color, speed_badge, ANSI_RESET, ANSI_CYAN, ANSI_RESET);
+    printf("%s│%*s\033[90G%s│%s\033[K\n", ANSI_CYAN, 88, "", ANSI_CYAN, ANSI_RESET);
 
-    printf("%s│%s  RPM   : %s  %s%4d RPM%s   (Idle: 800, Redline: 4000)%*s\033[90G%s│%s\033[K\n",
-           ANSI_CYAN, ANSI_RESET, rpm_bar, ANSI_BLUE, s->rpm, ANSI_RESET,
-           13, "", ANSI_CYAN, ANSI_RESET);
+    printf("%s│%s  RPM   : %s  %s%4d RPM%s  %s%s%s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, rpm_bar, rpm_color, s->rpm, ANSI_RESET,
+           rpm_color, rpm_badge, ANSI_RESET, ANSI_CYAN, ANSI_RESET);
+    printf("%s│%*s\033[90G%s│%s\033[K\n", ANSI_CYAN, 88, "", ANSI_CYAN, ANSI_RESET);
 
-    if (s->brake_switch) {
-        printf("%s│%s  BRAKE : %s  %s%3d %%%s     %s[● BRAKE ENGAGED]%s%*s\033[90G%s│%s\033[K\n",
-               ANSI_CYAN, ANSI_RESET, brake_bar, ANSI_YELLOW, s->brake_pressure, ANSI_RESET,
-               ANSI_YELLOW, ANSI_RESET, 23, "", ANSI_CYAN, ANSI_RESET);
-    } else {
-        printf("%s│%s  BRAKE : %s  %s  0 %%%s     %s[○ RELEASED]     %s%*s\033[90G%s│%s\033[K\n",
-               ANSI_CYAN, ANSI_RESET, brake_bar, ANSI_GRAY, ANSI_RESET,
-               ANSI_GRAY, ANSI_RESET, 23, "", ANSI_CYAN, ANSI_RESET);
-    }
+    printf("%s│%s  BRAKE : %s  %s%3d %%%s     %s%s%s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, brake_bar, brake_color, (s->brake_switch ? s->brake_pressure : 0), ANSI_RESET,
+           brake_color, brake_badge, ANSI_RESET, ANSI_CYAN, ANSI_RESET);
+    printf("%s│%*s\033[90G%s│%s\033[K\n", ANSI_CYAN, 88, "", ANSI_CYAN, ANSI_RESET);
 
-    printf("%s│%s  STEER : %s  %s%+5.1f deg%s (%-10s)%*s\033[90G%s│%s\033[K\n",
-           ANSI_CYAN, ANSI_RESET, steer_bar, ANSI_CYAN, (double)s->steer_deci / 10.0, ANSI_RESET,
-           turn_str, 28, "", ANSI_CYAN, ANSI_RESET);
+    printf("%s│%s  STEER : %s  %s%+5.1f deg%s (%-10s)\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, steer_bar, steer_color, (double)s->steer_deci / 10.0, ANSI_RESET,
+           turn_str, ANSI_CYAN, ANSI_RESET);
+    printf("%s│%*s\033[90G%s│%s\033[K\n", ANSI_CYAN, 88, "", ANSI_CYAN, ANSI_RESET);
 
-    printf("%s│%s  TEMP  : %s  %s%5.1f °C%s  [COOLANT NOMINAL]%*s\033[90G%s│%s\033[K\n",
-           ANSI_CYAN, ANSI_RESET, temp_bar, ANSI_MAGENTA, (double)s->engine_temp, ANSI_RESET,
-           23, "", ANSI_CYAN, ANSI_RESET);
+    printf("%s│%s  TEMP  : %s  %s%5.1f °C%s  %s%s%s\033[90G%s│%s\033[K\n",
+           ANSI_CYAN, ANSI_RESET, temp_bar, temp_color, (double)s->engine_temp, ANSI_RESET,
+           temp_color, temp_badge, ANSI_RESET, ANSI_CYAN, ANSI_RESET);
+    printf("%s│%*s\033[90G%s│%s\033[K\n", ANSI_CYAN, 88, "", ANSI_CYAN, ANSI_RESET);
 
     printf("%s│%s  INFO  : %s[%s] Nav Gateway: Route Guidance Active%*s\033[90G%s│%s\033[K\n",
            ANSI_CYAN, ANSI_RESET,
@@ -491,22 +578,28 @@ static void render_dashboard_cluster(const TelemetrySnapshot *s)
         if (telemetry_history[i].valid) {
             char brake_buf[32];
             if (telemetry_history[i].brake_switch) {
+                const char *bcol = (telemetry_history[i].brake_pressure > 50) ? ANSI_RED : ANSI_YELLOW;
                 if (telemetry_history[i].brake_pressure == 100) {
-                    snprintf(brake_buf, sizeof(brake_buf), "%sON (100%%)%s", ANSI_YELLOW, ANSI_RESET);
+                    snprintf(brake_buf, sizeof(brake_buf), "%sON (100%%)%s", bcol, ANSI_RESET);
                 } else {
-                    snprintf(brake_buf, sizeof(brake_buf), "%sON (%2d%%)%s ", ANSI_YELLOW, telemetry_history[i].brake_pressure, ANSI_RESET);
+                    snprintf(brake_buf, sizeof(brake_buf), "%sON (%2d%%)%s ", bcol, telemetry_history[i].brake_pressure, ANSI_RESET);
                 }
             } else {
                 snprintf(brake_buf, sizeof(brake_buf), "%sOFF      %s", ANSI_GRAY, ANSI_RESET);
             }
+
+            const char *h_spd_col = (telemetry_history[i].speed_kmh > 100) ? ANSI_YELLOW :
+                                    (telemetry_history[i].speed_kmh > 60) ? ANSI_CYAN : ANSI_GREEN;
+            const char *h_rpm_col = (telemetry_history[i].rpm >= 3200) ? ANSI_RED :
+                                    (telemetry_history[i].rpm >= 2400) ? ANSI_YELLOW : ANSI_BLUE;
 
             printf("%s│%s  %s[%02d:%02d]%s Frames: %s%7lu%s │ %s%5.1f fps%s │ Speed: %s%3d km/h%s │ RPM: %s%4d%s │ Brake: %s\033[90G%s│%s\033[K\n",
                    ANSI_CYAN, ANSI_RESET,
                    ANSI_WHITE, telemetry_history[i].minutes, telemetry_history[i].seconds, ANSI_RESET,
                    ANSI_WHITE, telemetry_history[i].frames, ANSI_RESET,
                    ANSI_GREEN, telemetry_history[i].fps, ANSI_RESET,
-                   ANSI_GREEN, telemetry_history[i].speed_kmh, ANSI_RESET,
-                   ANSI_BLUE, telemetry_history[i].rpm, ANSI_RESET,
+                   h_spd_col, telemetry_history[i].speed_kmh, ANSI_RESET,
+                   h_rpm_col, telemetry_history[i].rpm, ANSI_RESET,
                    brake_buf,
                    ANSI_CYAN, ANSI_RESET);
         } else {

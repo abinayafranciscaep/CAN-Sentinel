@@ -49,6 +49,7 @@
     - [Step 12.6: Real-Time Web-Based EV Sport Dashboard (Porsche Taycan / Audi e-tron Style)](#step-126-real-time-web-based-ev-sport-dashboard-porsche-taycan--audi-e-tron-style)
     - [Step 12.7: Dynamic PRND Transmission & Automatic Gear Indicator](#step-127-dynamic-prnd-transmission--automatic-gear-indicator)
     - [Step 12.8: Simultaneous Live Telemetry Feed & In-Place Diagnostic Logging](#step-128-simultaneous-live-telemetry-feed--in-place-diagnostic-logging)
+    - [Step 12.9: Dynamic Color Grading and Multi-Level Threshold Alerts](#step-129-dynamic-color-grading-and-multi-level-threshold-alerts)
 - [Step 13: WSL 2 Custom Kernel Environment Setup and Verification](#step-13-wsl-2-custom-kernel-environment-setup-and-verification)
 - [Known Limitations](#known-limitations)
 - [Expected Outcome](#expected-outcome)
@@ -188,6 +189,7 @@ The `vcan0` interface provides the virtual communication bus, while the six C-ba
 | Step 12.6: real-time web-based EV sport dashboard (`make dashboard`) | ✅ Done |
 | Step 12.7: dynamic PRND transmission & automatic gear indicator | ✅ Done |
 | Step 12.8: simultaneous live telemetry feed & in-place diagnostic logging (`--log`) | ✅ Done |
+| Step 12.9: dynamic ANSI color grading and multi-level threshold alerts | ✅ Done |
 | Step 13: Windows 11 WSL 2 custom kernel SocketCAN environment & cross-verification | ✅ Done |
 
 ## Development Workflow and Repository Layout
@@ -213,12 +215,17 @@ Windows host: D:\Study\Projects\CAN-Sentinel        (Git repository, branch memb
     ├── test_payloads.c                    # Automated unit verification suite
     ├── can_sentinel.dbc                   # Vector DBC specification
     ├── Makefile                           # Unified build and dashboard runner
-    └── README.md                          # ECU simulator build and run guide
+    ├── README.md                          # ECU simulator build and run guide
+    └── dashboard/                         # Self-contained EV Sport Digital Dashboard
+        ├── bridge.py                      # SocketCAN to WebSocket bridge & web server
+        ├── index.html                     # Hardware-accelerated Taycan-style frontend
+        └── README.md                      # Dashboard architecture and payload schema
 
 Execution Workspaces (Kali VM or WSL 2):
 ├── ecu_simulator.c                        # Copy of the repository source
 ├── test_payloads.c                        # Test runner source
 ├── Makefile                               # Build automation
+├── dashboard/                             # EV sport dashboard package
 └── ecu_simulator                          # Compiled SocketCAN binary
 ```
 
@@ -244,7 +251,7 @@ Each step lists the commands executed, their purpose, the verification output, a
 | [9](#step-9-commit-and-push-the-final-source) | Commit and push the final source | Windows | — | Git |
 | [10](#step-10-improve-signal-realism-and-reproducibility) | Fix signal update rate, link RPM to speed, add a seed option | Kali (+ Windows) | 24–37 | `nano`, `gcc`, `candump`, `grep`, `sha256sum`, Git |
 | [11](#step-11-record-the-three-10-minute-baseline-datasets) | Record three 10-minute baseline datasets with Member 3 | Kali | 38 | simulator, logger, validator |
-| [12](#step-12-automated-payload-tests-week-3) | Automated payload tests & advanced features (12.1–12.8) | Kali | 40–47 | `gcc`, test program, ANSI, WebSocket |
+| [12](#step-12-automated-payload-tests-week-3) | Automated payload tests & advanced features (12.1–12.9) | Kali / WSL 2 | 40–47, 51 | `gcc`, test program, ANSI, WebSocket |
 | [13](#step-13-wsl-2-custom-kernel-environment-setup-and-verification) | WSL 2 custom kernel SocketCAN setup & cross-platform verification | Windows 11 WSL 2 | 48–50 | `WSL 2`, `vcan0`, `can-utils`, `gcc`, Browser |
 
 ---
@@ -3005,7 +3012,7 @@ Execution summary: 37920 frames transmitted in 119.23 seconds (average rate: 318
 
 ### Step 12.6: Real-Time Web-Based EV Sport Dashboard (Porsche Taycan / Audi e-tron Style)
 
-> **Environment:** Kali Linux VM (`~/CAN-Sentinel/ecu-simulator/dashboard/`) and Windows / Linux browser (`http://localhost:8080`)  
+> **Environment:** Kali Linux VM / Windows 11 WSL 2 (`ecu_sim/dashboard/`) and Windows / Linux browser (`http://localhost:8080`)  
 > **Status:** ✅ **Implemented & Integrated.** To provide commercial-grade, hardware-accelerated automotive visualization alongside the ANSI terminal cluster, a real-time web-based EV Sport Dashboard was developed and integrated into the project build system.
 
 #### Architectural Overview
@@ -3207,6 +3214,89 @@ The dashboard decouples low-level Linux kernel CAN networking from high-fidelity
 
 ---
 
+### Step 12.9: Dynamic Color Grading and Multi-Level Threshold Alerts
+
+> **Environment:** Kali Linux VM / Windows 11 WSL 2 (compile and run)  
+> **Status:** 🟢 **Implemented & Verified.**  
+> **Source Files Modified:** `ecu_sim/ecu_simulator.c` (in `render_dashboard_cluster()`)
+
+#### Context & Motivation
+
+Automotive digital instrument clusters (ISO 15008 / ISO 2575) must communicate operating conditions through peripheral color cues rather than forcing the driver to read numerical values. A static monochrome display fails to represent urgent operational transitions. Step 12.9 introduces **Dynamic Multi-Level Color Grading and State Badging** into the ANSI terminal digital cluster:
+* **Engine RPM:** Dynamically transitions from Cool Blue (`800–2,400 RPM`, Cruise Nominal) to Warning Amber (`2,401–3,200 RPM`, High Engine Load) to Bold Redline Alert (`> 3,200 RPM`, `[⚠ REDLINE LIMIT]`).
+* **Coolant Temperature:** Dynamically shifts across four distinct thermal zones: Cold Warmup Blue (`< 85 °C`, `[WARMUP PHASE]`), Optimal Green (`85–98 °C`, `[COOLANT NOMINAL]`), Elevated Amber (`98.1–102 °C`, `[⚠ ELEVATED TEMP]`), and Overheating Red (`> 102 °C`, `[🔥 OVERHEAT WARN]`).
+* **Braking Force:** Color-grades from Muted Gray (`0%`, `[○ RELEASED]`) to Amber (`1–50%`, `[● BRAKE ENGAGED]`) to High-Intensity Emergency Red (`> 50%`, `[🚨 HARD BRAKE]`).
+* **Vehicle Speed & Steering:** Speed dynamically shifts from City Green (`0–60 km/h`) to Highway Cyan (`61–100 km/h`) to High Speed Amber (`> 100 km/h`, `[⚡ HIGH SPEED]`). Steering shifts to Amber during severe lock angles (`> 35°`).
+* **Simultaneous Rolling Feed:** Dynamic ANSI color grading is propagated directly into the 10-line rolling telemetry log so historical diagnostic snapshots preserve exact threshold violation highlights.
+
+#### Dynamic Threshold Architecture
+
+| Subsystem | Metric Range | ANSI Escape | Dynamic Status Badge | Operational Meaning |
+| :--- | :--- | :--- | :--- | :--- |
+| **Engine RPM** | `800 – 2,400 RPM`<br>`2,401 – 3,200 RPM`<br>`> 3,200 RPM` | `\033[1;34m` (Blue)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `(Cruise: Nominal)`<br>`[HIGH LOAD ZONE]`<br>`[⚠ REDLINE LIMIT]` | Powertrain load state and redline proximity. |
+| **Coolant Temp** | `< 85.0 °C`<br>`85.0 – 98.0 °C`<br>`98.1 – 102.0 °C`<br>`> 102.0 °C` | `\033[1;34m` (Blue)<br>`\033[1;32m` (Green)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `[WARMUP PHASE]`<br>`[COOLANT NOMINAL]`<br>`[⚠ ELEVATED TEMP]`<br>`[🔥 OVERHEAT WARN]` | Engine thermal management and cooling loop health. |
+| **Brake System** | `0 %` (Switch OFF)<br>`1 – 50 %`<br>`> 50 – 100 %` | `\033[0;90m` (Gray)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `[○ RELEASED]`<br>`[● BRAKE ENGAGED]`<br>`[🚨 HARD BRAKE]` | Hydraulic line pressure and emergency stopping alert. |
+| **Vehicle Speed** | `0 – 60 km/h`<br>`61 – 100 km/h`<br>`> 100 km/h` | `\033[1;32m` (Green)<br>`\033[1;36m` (Cyan)<br>`\033[1;33m` (Amber) | `(City Zone)`<br>`(Highway Cruise)`<br>`[⚡ HIGH SPEED]` | Road speed profile and overspeed advisory. |
+
+#### Terminal Output with Active Alerts
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│  ► CAN-SENTINEL AUTOMOTIVE ECU CLUSTER  (MULTI-THREADED DISTRIBUTED)                   │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  Interface: vcan0  │  Kernel: SocketCAN  │  Workers: 7 pthreads (C11 Lock-Free)        │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  VEHICLE TELEMETRY DYNAMICS                                                            │
+│                                                                                        │
+│  GEAR  : ( P )  ( R )  ( N )  ◄[ D4 ]►   DRIVE MODE: [FORWARD D-4]                     │
+│                                                                                        │
+│  SPEED : [██████████████████━━━━━━]  105 km/h  [⚡ HIGH SPEED]                          │
+│                                                                                        │
+│  RPM   : [████████████████████━━━━]  3350 RPM  [⚠ REDLINE LIMIT]                       │
+│                                                                                        │
+│  BRAKE : [████████████████████████]  100 %     [🚨 HARD BRAKE]                          │
+│                                                                                        │
+│  STEER : [◄───────────│►►●───────►]   +1.2 deg (Straight  )                            │
+│                                                                                        │
+│  TEMP  : [██████████████████━━━━━━]   99.5 °C  [⚠ ELEVATED TEMP]                       │
+│                                                                                        │
+│  INFO  : [● MEDIA ON ] Nav Gateway: Route Guidance Active                              │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  PER-ECU TRANSMISSION STATUS & REAL-TIME SCHEDULING                                    │
+│                                                                                        │
+│  [●] 0x0A0  Brake Controller     20 ms ( 50 Hz) │ Frames:     768 │ SCHED_FIFO (80)    │
+│  [●] 0x0B0  Steering Gateway     10 ms (100 Hz) │ Frames:    1536 │ SCHED_FIFO (80)    │
+│  [●] 0x100  Powertrain Engine    10 ms (100 Hz) │ Frames:    1530 │ SCHED_FIFO (50)    │
+│  [●] 0x200  Speed Sensor         20 ms ( 50 Hz) │ Frames:     768 │ SCHED_FIFO (50)    │
+│  [●] 0x300  Thermal Mgmt        100 ms ( 10 Hz) │ Frames:     153 │ SCHED_OTHER (0)    │
+│  [●] 0x600  Infotainment Media  100 ms ( 10 Hz) │ Frames:     153 │ SCHED_OTHER (0)    │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  LIVE TELEMETRY FEED (ROLLING 50-SECOND WINDOW / 10 RECENT SNAPSHOTS)                  │
+│                                                                                        │
+│  [00:00] Frames:       0 │   0.0 fps │ Speed:  60 km/h │ RPM: 2300 │ Brake: OFF        │
+│  [00:05] Frames:    1602 │ 320.1 fps │ Speed:  48 km/h │ RPM: 2010 │ Brake: OFF        │
+│  [00:10] Frames:    3203 │ 320.1 fps │ Speed:  35 km/h │ RPM: 1680 │ Brake: ON (64%)   │
+│  [00:15] Frames:    4804 │ 320.0 fps │ Speed:  22 km/h │ RPM: 1350 │ Brake: ON (100%)  │
+│  [00:20] Frames:    6405 │ 320.0 fps │ Speed:  18 km/h │ RPM: 1250 │ Brake: ON (100%)  │
+│  [00:25] Frames:    8006 │ 320.1 fps │ Speed:  32 km/h │ RPM: 1600 │ Brake: OFF        │
+│  [00:30] Frames:    9607 │ 320.1 fps │ Speed:  45 km/h │ RPM: 1920 │ Brake: OFF        │
+│  [00:35] Frames:   11208 │ 320.0 fps │ Speed:  58 km/h │ RPM: 2250 │ Brake: OFF        │
+│  [00:40] Frames:   12809 │ 320.1 fps │ Speed:  62 km/h │ RPM: 2350 │ Brake: OFF        │
+│  [00:45] Frames:   14410 │ 320.0 fps │ Speed: 105 km/h │ RPM: 3350 │ Brake: ON (100%)  │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│  TIME: 00:45 / 01:00  [█████████░░░]   75% │ TOTAL:   14410 frames (Rate: 320.0 fps) │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+ [Press Ctrl+C to stop simulation cleanly]
+```
+
+![Dynamic Color Grading Cluster](screenshots/51-dynamic-color-grading-cluster.png)
+
+**Screenshot 51:** ANSI digital instrument cluster in WSL 2 / Kali Linux demonstrating dynamic real-time color grading across all gauges: RPM shifting into Redline warning at 3,350 RPM (`[⚠ REDLINE LIMIT]`), Coolant alerting in Amber at 99.5 °C (`[⚠ ELEVATED TEMP]`), Speed in Highway Amber at 105 km/h (`[⚡ HIGH SPEED]`), and Emergency Braking engaged (`[🚨 HARD BRAKE]`).
+
+**Result:** Step 12.9 elevates the simulator's user interface from a static text grid to a responsive, multi-tier digital instrument cluster adhering to automotive display ergonomics (ISO 15008).
+
+---
+
 ## Step 13: WSL 2 Custom Kernel Environment Setup and Verification
 
 ### 1. Motivation & Multi-Environment Strategy
@@ -3338,5 +3428,5 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 ## Next Steps
 
 1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
-2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, and simultaneous rolling telemetry logging in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, and 12.8) complete.
+2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, simultaneous rolling telemetry logging, and dynamic color grading with threshold alerts in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, and 12.9) complete.
 3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.

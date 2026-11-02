@@ -16,23 +16,48 @@ sudo modprobe vcan
 sudo ip link add dev vcan0 type vcan
 sudo ip link set up vcan0
 
-# 2. Compile (from the repository root)
-gcc -Wall -Wextra -pthread -o ecu_sim/ecu_simulator ecu_sim/ecu_simulator.c -lpthread -lrt
+# 2. Build binaries & execute automated unit tests (7/7 PASS)
+make
+make test
 
-# 3. Run, then watch traffic in a second terminal
-./ecu_sim/ecu_simulator
-candump vcan0
+# 3. Launch the multi-threaded ECU Simulator (Terminal 1)
+./ecu_simulator --threads
+
+# 4. Launch the Web-Based EV Sport Dashboard (Terminal 2)
+make dashboard
+# Then open in host browser: http://localhost:8080
 ```
 
-Stop the simulator with `Ctrl+C`. It exits cleanly and prints a confirmation message.
+Stop the simulator with `Ctrl+C`. It exits cleanly and joins all threads.
+
+---
+
+## Directory Structure
+
+The `ecu_sim` module is completely self-contained for Member 1 deliverables:
+
+```text
+ecu_sim/
+├── ecu_simulator.c        # Multi-threaded C SocketCAN 6-ECU simulator (pthreads, atomics)
+├── test_payloads.c        # Automated unit verification suite (7/7 tests passed)
+├── can_sentinel.dbc       # Vector DBC specification defining all 6 messages & signals
+├── Makefile               # Unified build automation (make, test, dashboard, clean)
+├── README.md              # Complete architecture, protocol, and usage documentation
+└── dashboard/             # Self-contained EV Sport Digital Dashboard
+    ├── bridge.py          # Native Linux SocketCAN-to-WebSocket bridge & HTTP server
+    ├── index.html         # Hardware-accelerated Taycan / e-tron style digital cluster
+    └── README.md          # Web dashboard architecture and WebSocket JSON schema
+```
 
 ---
 
 ## Contents
 
-- [Prerequisites](#prerequisites)
+- [Directory Structure](#directory-structure)
+- [Prerequisites & Supported Environments](#prerequisites--supported-environments)
+- [Windows 11 / WSL 2 Development Environment](#windows-11--wsl-2-development-environment)
 - [Configure the virtual CAN interface](#configure-the-virtual-can-interface)
-- [Compile](#compile)
+- [Compile & Build Automation](#compile)
 - [Run](#run)
 - [CAN message protocol](#can-message-protocol)
 - [Why these CAN IDs](#why-these-can-ids)
@@ -42,6 +67,7 @@ Stop the simulator with `Ctrl+C`. It exits cleanly and prints a confirmation mes
 - [Per-ID timing check](#per-id-timing-check)
 - [Validate signal variation](#validate-signal-variation)
 - [Use with the logger (recording datasets)](#use-with-the-logger-recording-datasets)
+- [Real-Time Web-Based EV Sport Digital Dashboard (`ecu_sim/dashboard/`)](#real-time-web-based-ev-sport-digital-dashboard-ecu_simdashboard)
 - [Known limitations](#known-limitations)
 - [Notes](#notes)
 
@@ -61,22 +87,52 @@ sudo apt update
 sudo apt install -y gcc can-utils
 ```
 
-## Configure the virtual CAN interface
+---
 
-```bash
-sudo modprobe vcan
-sudo ip link add dev vcan0 type vcan
-sudo ip link set up vcan0
-ip link show vcan0
+## Windows 11 / WSL 2 Development Environment
+
+While traditional Linux virtual machines (VirtualBox/VMware) support SocketCAN out-of-the-box, running tests in **Windows Subsystem for Linux 2 (WSL 2)** provides near-instant boot times, minimal RAM footprint, and native port forwarding to the Windows host (`http://localhost:8080`).
+
+### Why Default WSL 2 Lacks Virtual CAN
+Microsoft's default WSL 2 kernel intentionally leaves CAN bus networking disabled:
+* `CONFIG_CAN` is not set (`n`)
+* `CONFIG_CAN_RAW` is not set (`n`)
+* `CONFIG_CAN_VCAN` is not set (`n`)
+
+Running `sudo modprobe vcan` on default WSL 2 fails with: `modprobe: FATAL: Module vcan not found`.
+
+### Running on the Tailored WSL 2 Kernel
+A custom WSL 2 kernel was compiled from Microsoft's kernel source with CAN networking enabled:
+* `CONFIG_CAN=y`
+* `CONFIG_CAN_RAW=y`
+* `CONFIG_CAN_VCAN=m`
+
+Point your Windows host `C:\Users\<username>\.wslconfig` to the compiled `vmlinux` binary:
+```ini
+[wsl2]
+kernel=C:\\Users\\<username>\\vmlinux-wsl2-can
 ```
 
-`ip link show vcan0` should report the interface as `UP`. If `ip link add` reports
-`File exists`, the interface is already configured and only `ip link set up vcan0` is
-needed. `vcan0` is not persistent and must be recreated after a reboot.
+### Daily Activation & Verification in WSL 2
+1. **Bring up `vcan0`:**
+   ```bash
+   sudo modprobe vcan && sudo ip link add dev vcan0 type vcan 2>/dev/null; sudo ip link set up vcan0
+   ip link show vcan0
+   ```
+2. **Execute Automated Unit Tests:**
+   ```bash
+   cd ecu_sim
+   make test
+   # Results: 7 / 7 tests passed (0 failed).
+   ```
+3. **Launch the Web Dashboard:**
+   ```bash
+   make dashboard
+   ```
+   Open `http://localhost:8080` directly in Windows Chrome / Edge (no VirtualBox network adapters or port forwarding needed).
 
-> [!TIP]
-> **Developing on Windows with WSL 2:**  
-> If using WSL 2 on Windows 11, the default Microsoft WSL kernel has CAN disabled. Follow our verified [WSL 2 Custom Kernel Setup Guide](../docs/member-1/wsl2_setup.md) to compile a custom WSL2 kernel with `CONFIG_CAN` and run the entire simulator, test suite, and EV sport web dashboard natively on Windows in seconds!
+> [!NOTE]
+> For the comprehensive end-to-end kernel compilation instructions, build dependencies, and troubleshooting logs, refer to the dedicated [WSL 2 Custom Kernel Setup Guide](../docs/member-1/wsl2_setup.md).
 
 ## Compile
 
@@ -98,6 +154,7 @@ Available build targets:
 | :--- | :--- | :--- |
 | `make` / `make all` | Compile binaries | Builds `ecu_simulator` and `test_payloads` with `-Wall -Wextra -Wpedantic -std=c11 -O2 -pthread` |
 | `make test` | Run test suite | Compiles and executes the 7/7 automated unit test suite |
+| `make dashboard` | Launch dashboard | Launches the EV Sport Digital Dashboard & WebSocket bridge (`http://localhost:8080`) |
 | `make setup-vcan` | Setup network | Checks and configures the Linux `vcan0` virtual interface |
 | `make clean` | Clean workspace | Safely deletes compiled executable binaries |
 | `make help` | Help menu | Prints target descriptions and usage guide |
@@ -483,29 +540,77 @@ The simulator features a real-time in-place terminal instrument cluster that tra
 3. **Absolute Monotonic Sleep (`clock_nanosleep`):** Each ECU thread sleeps using `CLOCK_MONOTONIC` and `TIMER_ABSTIME`, completely preventing cumulative timer drift.
 4. **Graceful Multi-Thread Teardown:** Upon `SIGINT` (`Ctrl+C`), all threads are joined via `pthread_join()`, ensuring zero memory or file descriptor leaks on exit.
 
-## Real-Time Web-Based EV Sport Digital Dashboard
+## Real-Time Web-Based EV Sport Digital Dashboard (`ecu_sim/dashboard/`)
 
-In addition to the in-place ANSI terminal cluster, the project includes an interactive, browser-based digital instrument dashboard (Porsche Taycan / Audi e-tron GT style) located in `~/CAN-Sentinel/ecu-simulator/dashboard/` (or repository path `docs/member-1/dashboard/`).
+In addition to the in-place ANSI terminal cluster, the `ecu_sim` module includes a self-contained, interactive browser-based digital instrument dashboard (Porsche Taycan / Audi e-tron GT style) located in `ecu_sim/dashboard/`.
 
-### Starting the Web Dashboard with Make
+### Directory Layout
+```text
+ecu_sim/dashboard/
+├── bridge.py     # Native Python SocketCAN reader, JSON decoder, WebSocket & HTTP server
+├── index.html    # 60 FPS HTML5 Canvas / WebGL dark glassmorphic dashboard UI
+└── README.md     # Dedicated dashboard documentation and WebSocket payload specification
+```
+
+### Quick Launch with Make
 
 ```bash
-# Launch the Python SocketCAN bridge and Web Dashboard server
+# From the ecu_sim directory:
 make dashboard
 ```
 
 Once started, navigate to:
-* **Inside Kali Linux:** `http://localhost:8080`
-* **From Windows host browser:** `http://<kali-ip>:8080` (find your IP in Kali via `hostname -I`), or `http://localhost:8080` if VirtualBox port 8080 is forwarded.
+* **Under Windows 11 WSL 2:** `http://localhost:8080` (native port forward out-of-the-box)
+* **Inside Kali Linux VM:** `http://localhost:8080`
+* **From Windows host browser to VM:** `http://<kali-ip>:8080` (find your IP via `hostname -I`), or `http://localhost:8080` if VirtualBox forwarded port 8080.
 
-### Dashboard Capabilities:
-* **Native SocketCAN Bridge (`bridge.py`):** Unpacks all 6 ECUs directly from `vcan0` and streams JSON telemetry over RFC 6455 WebSockets at 20 Hz.
-* **Dual 60 FPS Radial Gauges:** Sweeping luminous needles for Speed (0–140 km/h) and Powertrain RPM (0–5000 RPM) with progressive amber/redline warning.
-* **Articulated Steering:** Front wheels physically turn left/right in real time matching CAN ID `0x0B0` signed angle (-45° to +45°).
-* **Reactive Brake Lights:** Continuous rear LED lightbar illuminates neon red when CAN ID `0x0A0` brake switch activates.
-* **Holographic Transmission:** Automatic gear indicator `[ P ] [ R ] [ N ] ◄[ D1-D5 ]►`.
-* **Physical Bus Load:** Real-time bus load monitoring (~8.19% @ 500 kbps baseline).
-* **Synthesized EV Sound:** Real-time Web Audio motor synthesis modulated by speed and RPM.
+---
+
+### The 6 Decoded ECUs & Live WebSocket Protocol
+
+The bridge (`bridge.py`) binds to the Linux `vcan0` interface using raw `AF_CAN` sockets, decodes all 6 baseline CAN message identifiers, tracks rolling sequence counters, calculates physical bus load, and broadcasts a unified JSON telemetry packet over RFC 6455 WebSockets (`ws://localhost:8080/ws`) at 20 Hz (every 50 ms):
+
+| CAN ID | ECU Subsystem | Signals Decoded | Encoding & Engineering Units | UI Representation |
+| :---: | :--- | :--- | :--- | :--- |
+| **`0x0A0`** | **Brake Controller** | `brake_switch`<br>`brake_pressure` | Byte 0 (0: OFF, 1: ON)<br>Byte 1 (0–100 %) | Rear continuous LED lightbar glows neon red; numerical pressure display |
+| **`0x0B0`** | **Steering Gateway** | `steering_angle` | Bytes 0–1 signed 16-bit big-endian (`-450` to `+450` deci-deg, factor 0.1) | Front virtual vehicle wheels turn dynamically; horizon steering needle |
+| **`0x100`** | **Powertrain Engine** | `engine_rpm` | Bytes 0–1 unsigned 16-bit big-endian (800–4000 RPM) | Left 60 FPS swept radial tachometer dial with progressive amber/redline glow |
+| **`0x200`** | **Speed Sensor** | `vehicle_speed` | Byte 0 unsigned integer (0–130 km/h) | Right 60 FPS swept radial speedometer dial with digital center readout |
+| **`0x300`** | **Thermal Mgmt** | `engine_temp` | Byte 0 unsigned (+40 °C offset, range 80–105 °C) | Coolant temperature bar with dynamic nominal/overheat warning |
+| **`0x600`** | **Infotainment** | `media_status` | Byte 0 (0: Inactive, 1: Active route guidance) | Route guidance banner & audio media indicator |
+
+All 6 frames also feature an independent rolling sequence counter in **Byte 7 (0–255, wrapping $255 \rightarrow 0$)** that the bridge monitors for transmission continuity and packet loss.
+
+### Physical Bus Load Monitoring
+In addition to telemetry, the bridge calculates real-time physical CAN bus utilization at 500 kbps:
+$$\text{Bit Overhead per Frame} \approx (47\text{ fixed bits} + 64\text{ data bits}) \times 1.2\text{ (bit stuffing factor)} \approx 133\text{ bits}$$
+At the nominal baseline rate of 320 frames/sec:
+$$\text{Bus Bandwidth} = 320 \times 133 = 42,560\text{ bps} \implies \approx 8.51\%\text{ physical bus load}$$
+The dashboard visualizes this on a dedicated **Bus Load Gauge** (`0–100%`). When attack traffic occurs (such as a DoS flood attack by Member 2), the gauge surges into the red zone ($>80\%$), visibly demonstrating bus congestion and denial of service.
+
+### Live WebSocket JSON Payload Schema
+At 20 Hz, `bridge.py` emits the following structured JSON frame to all connected web clients:
+```json
+{
+  "timestamp": 1793614174.998,
+  "telemetry": {
+    "speed": 65,
+    "rpm": 2425,
+    "brake_switch": 1,
+    "brake_pressure": 75,
+    "steering_angle": 12.4,
+    "engine_temp": 94.5,
+    "infotainment": 1,
+    "gear": "D3"
+  },
+  "metrics": {
+    "fps": 320.1,
+    "total_frames": 19200,
+    "bus_load_pct": 8.5,
+    "active_ecus": 6
+  }
+}
+```
 
 
 ## Known limitations
