@@ -31,10 +31,10 @@ import json
 import sys
 import socket
 import time
+import math
 from collections import Counter, deque
 from pathlib import Path
-
-from PyQt6.QtCore import Qt, QSize, QTimer, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, QRectF, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -587,7 +587,113 @@ class ClickableFrame(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
+class DonutChart(QWidget):
+    """Interactive CAN-ID traffic distribution doughnut chart."""
 
+    can_id_clicked = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.data = []
+        self.total = 0
+        self.colors = [
+            QColor("#20B8FF"),
+            QColor("#36D6A0"),
+            QColor("#FFB547"),
+            QColor("#FF718B"),
+            QColor("#A78BFA"),
+            QColor("#F59E0B"),
+            QColor("#55C2E8"),
+            QColor("#9CA3AF"),
+        ]
+        self.setMinimumHeight(220)
+        self.setMinimumWidth(360)
+
+    def set_data(self, data, total):
+        self.data = data
+        self.total = total
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        if not self.data:
+            painter.setPen(QColor("#8EA6C2"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "Waiting for CAN traffic...")
+            return
+
+        size = min(175, self.height() - 25)
+        pie = QRectF(15, (self.height() - size) / 2, size, size)
+
+        start = 0.0
+        for i, (can_id, count) in enumerate(self.data):
+            span = count / max(self.total, 1) * 360
+            painter.setBrush(self.colors[i % len(self.colors)])
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPie(pie, int(start * 16), int(span * 16))
+            start += span
+
+        # Doughnut center
+        center_size = size * 0.55
+        center = pie.center()
+        painter.setBrush(QColor("#101E30"))
+        painter.drawEllipse(
+            QRectF(center.x() - center_size / 2,
+                   center.y() - center_size / 2,
+                   center_size, center_size)
+        )
+
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawText(
+            QRectF(center.x() - 45, center.y() - 18, 90, 36),
+            Qt.AlignmentFlag.AlignCenter,
+            str(self.total)
+        )
+
+        # Legend
+        x = pie.right() + 20
+        y = 25
+        for i, (can_id, count) in enumerate(self.data):
+            color = self.colors[i % len(self.colors)]
+            painter.setBrush(color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(QRectF(x, y + 3, 10, 10), 3, 3)
+
+            percentage = count / max(self.total, 1) * 100
+            painter.setPen(QColor("#DCE8F7"))
+            painter.drawText(
+                int(x + 18), int(y + 13),
+                f"{can_id} - {ecu_name(can_id) or 'Unknown ECU'}: {count} ({percentage:.1f}%)"
+            )
+            y += 23
+
+        painter.end()
+
+    def mousePressEvent(self, event):
+        if not self.data:
+            return
+
+        size = min(175, self.height() - 25)
+        center_x = 15 + size / 2
+        center_y = self.height() / 2
+        dx = event.position().x() - center_x
+        dy = center_y - event.position().y()
+
+        distance = (dx * dx + dy * dy) ** 0.5
+        if distance < size * 0.225 or distance > size * 0.5:
+            return
+
+        angle = math.degrees(math.atan2(dy, dx)) % 360
+        cumulative = 0
+
+        for can_id, count in self.data:
+            span = count / max(self.total, 1) * 360
+            if cumulative <= angle < cumulative + span:
+                self.can_id_clicked.emit(can_id)
+                break
+            cumulative += span
 
 def make_card(title, value, color, size=30, tip=None):
     """Create a rounded metric card with a title and a large value.
@@ -1112,56 +1218,101 @@ class Dashboard(QMainWindow):
         self.last_refresh.setText(
             f"UI refresh: {time.strftime('%H:%M:%S')}"
         )
+    
     def _update_analysis(self, rows):
-        """Render descriptive statistics from recorded CSV rows; no detection inference."""
+        """Update CAN-ID statistics, horizontal bars and doughnut chart."""
         if not hasattr(self, "analysis_bars"):
             return
+
+        total = len(rows)
+        counts = {}
+
+        for row in rows:
+            can_id = str(row[1])
+            counts[can_id] = counts.get(can_id, 0) + 1
+
+        alert_rows = sum(
+            1 for row in rows if str(row[4]).upper() == "ALERT"
+        )
+
+        self.analysis_frames_card.value_label.setText(str(total))
+        self.analysis_ids_card.value_label.setText(str(len(counts)))
+        self.analysis_alerts_card.value_label.setText(str(alert_rows))
+
+        top = sorted(
+            counts.items(),
+            key=lambda item: item[1],
+            reverse=True
+        )[:8]
+
+        # Clear and rebuild only the horizontal bars.
         while self.analysis_bars.count():
             item = self.analysis_bars.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
-        total = len(rows)
-        counts = {}
-        for row in rows:
-            counts[str(row[1])] = counts.get(str(row[1]), 0) + 1
-        alert_rows = sum(1 for row in rows if str(row[4]).upper() == "ALERT")
-        self.analysis_frames_card.value_label.setText(str(total))
-        self.analysis_ids_card.value_label.setText(str(len(counts)))
-        self.analysis_alerts_card.value_label.setText(str(alert_rows))
-        top = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:8]
+
         if not top:
-            empty = QLabel("No recorded rows available for analysis.")
+            empty = QLabel("Waiting for CAN traffic...")
             empty.setObjectName("muted")
             self.analysis_bars.addWidget(empty)
+
+            if hasattr(self, "analysis_donut"):
+                self.analysis_donut.set_data([], 0)
             return
+
         for can_id, count in top:
             row_widget = ClickableFrame()
             row_widget.setCursor(Qt.CursorShape.PointingHandCursor)
-            row_widget.setToolTip(f"Click to filter CAN Traffic by {can_id}")
-            row_widget.setStyleSheet(
-                "ClickableFrame:hover { background-color: #122238; border-radius: 6px; }"
+            row_widget.setToolTip(
+                f"Click to filter CAN Traffic by {can_id}"
             )
-            row_widget.clicked.connect(lambda cid=can_id: self.filter_by_id(cid))
+            row_widget.setStyleSheet(
+                "ClickableFrame:hover {"
+                "background-color: #122238; border-radius: 6px;}"
+            )
+            row_widget.clicked.connect(
+                lambda cid=can_id: self.filter_by_id(cid)
+            )
+
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(4, 2, 4, 2)
             row_layout.setSpacing(10)
-            label = QLabel(f"{can_id}  ·  {ecu_name(can_id) or 'unknown ECU'}")
+
+            label = QLabel(
+                f"{can_id}  ·  {ecu_name(can_id) or 'unknown ECU'}"
+            )
             label.setMinimumWidth(180)
             label.setStyleSheet("color: #DCE8F7;")
+
             bar = QProgressBar()
             bar.setRange(0, max(total, 1))
             bar.setValue(count)
             bar.setTextVisible(False)
             bar.setFixedHeight(12)
-            bar.setStyleSheet("QProgressBar { background:#172D46; border:0; border-radius:6px; } QProgressBar::chunk { background:#20B8FF; border-radius:6px; }")
-            value = QLabel(f"{count}  ({count / max(total, 1) * 100:.1f}%)")
+            bar.setStyleSheet(
+                "QProgressBar {"
+                "background:#172D46; border:0; border-radius:6px;}"
+                "QProgressBar::chunk {"
+                "background:#20B8FF; border-radius:6px;}"
+            )
+
+            value = QLabel(
+                f"{count}  ({count / max(total, 1) * 100:.1f}%)"
+            )
             value.setMinimumWidth(95)
             value.setStyleSheet("color: #8EA6C2;")
+
             row_layout.addWidget(label)
             row_layout.addWidget(bar, 1)
             row_layout.addWidget(value)
+
             self.analysis_bars.addWidget(row_widget)
+
+        # Update the doughnut with exactly the same data.
+        if hasattr(self, "analysis_donut"):
+            self.analysis_donut.set_data(top, total)
+
 
     def _populate_table(self, table, rows):
         sorting_was_enabled = table.isSortingEnabled()
@@ -1792,13 +1943,32 @@ class Dashboard(QMainWindow):
         body_layout.addWidget(refresh_button, 0, Qt.AlignmentFlag.AlignLeft)
 
         # Compact CAN-ID distribution bars (click a bar to filter traffic).
-        dist_title = QLabel("TRAFFIC SHARE BY CAN ID  (click a bar to filter CAN Traffic)")
-        dist_title.setStyleSheet("color: #A9BED7; font-size: 13px; font-weight: bold; margin-top: 4px;")
+               # CAN-ID distribution: bars + doughnut side by side
+        dist_title = QLabel("TRAFFIC SHARE BY CAN ID")
+        dist_title.setStyleSheet(
+            "color: #A9BED7; font-size: 13px; font-weight: bold; margin-top: 4px;"
+        )
         body_layout.addWidget(dist_title)
-        self.analysis_bars = QVBoxLayout()
-        self.analysis_bars.setSpacing(7)
-        body_layout.addLayout(self.analysis_bars)
 
+        dist_container = QWidget()
+        dist_layout = QHBoxLayout(dist_container)
+        dist_layout.setContentsMargins(0, 0, 0, 0)
+        dist_layout.setSpacing(20)
+
+        # Existing clickable horizontal bars
+        bars_widget = QWidget()
+        self.analysis_bars = QVBoxLayout(bars_widget)
+        self.analysis_bars.setContentsMargins(0, 0, 0, 0)
+        self.analysis_bars.setSpacing(7)
+
+        # Doughnut chart
+        self.analysis_donut = DonutChart()
+        self.analysis_donut.can_id_clicked.connect(self.filter_by_id)
+
+        dist_layout.addWidget(bars_widget, 3)
+        dist_layout.addWidget(self.analysis_donut, 2)
+
+        body_layout.addWidget(dist_container)
         status_card_layout.addWidget(self.health_body)
         page.addWidget(status_card)
 
