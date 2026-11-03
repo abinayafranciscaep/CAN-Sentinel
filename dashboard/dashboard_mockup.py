@@ -24,6 +24,15 @@ Interactions
     Alerts: mark as reviewed, copy details
     Shortcuts: Ctrl+1/2/3 tabs, Ctrl+F search, F5 refresh, Ctrl +/-/0 zoom
 """
+import Dataset_summary
+from openpyxl.styles import styleable
+from openpyxl.styles import styleable
+from openpyxl.styles import styleable
+from openpyxl.styles import styleable
+from openpyxl.styles import styleable
+from openpyxl.styles import styleable
+from openpyxl.styles import styleable
+from openpyxl.styles import styleable
 import csv
 import datetime
 import html
@@ -179,15 +188,21 @@ def load_alert(path):
 
 
 def find_recording(data_dir):
-    """Newest data/normal_run*_*.csv, or None."""
+    """Return the newest non-empty normal_run CSV recording."""
     try:
-        files = sorted(
-            data_dir.glob("normal_run*_*.csv"),
+        files = [
+            p for p in data_dir.glob("normal_run*_*.csv")
+            if p.is_file() and p.stat().st_size > 0
+        ]
+
+        files.sort(
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
+
     except OSError:
         return None
+
     return files[0] if files else None
 
 
@@ -308,7 +323,7 @@ def load_fps_series(path):
 # Load everything once at start-up.
 ALERT = load_alert(ALERT_FILE)
 RECORDING_FILE = find_recording(DATA_DIR)
-RECORDING = load_recording(RECORDING_FILE)
+RECORDING = load_recording(RECORDING_FILE, n=100)
 
 if RECORDING:
     ROWS, _fps, RECORDING_NAME, CLOCK_STEPS = RECORDING
@@ -1086,7 +1101,12 @@ class Dashboard(QMainWindow):
                 "CAN-SENTINEL  •  AUTOMOTIVE SECURITY MONITORING"
                 "  |  RECORDED DATA MODE"
             )
-            self.traffic_hint.setText("Recorded CSV rows only.")
+            self.source_status.setText(
+            "Recorded file: normal_run2_1025.csv | 100 recent rows | NOT LIVE"
+            )
+            self.traffic_hint.setText(
+                "Recorded CSV rows only — this view displays recorded CSV data."
+            )
             self.traffic_badge.setText("RECORDED DATA MODE")
     # ------------------------------------------------------------------ data
     def handle_live_frame(self, frame):
@@ -1160,8 +1180,10 @@ class Dashboard(QMainWindow):
             if recording:
                 rows, fps, filename, clock_steps = recording
                 self.current_recording_name = filename
-                self.current_fps = "0"
                 self.current_clock_steps = clock_steps
+
+                # Update recorded FPS on every refresh
+                self.current_fps = f"{fps:.0f}"
                 self.fps_card.value_label.setText(self.current_fps)
                 self.source_status.setText(
                     f"Recorded file: {filename} | {len(rows)} recent rows | NOT LIVE"
@@ -1170,6 +1192,18 @@ class Dashboard(QMainWindow):
                 # selected row or hovered bar is not reset every second.
                 if rows != self._last_rows or force:
                     self._last_rows = list(rows)
+                    self.current_rows = list(rows)
+
+                    # Populate CAN Traffic table
+                    self._populate_table(self.traffic_table, rows)
+                    self.filter_traffic_table()
+
+                    # Update Overview table
+                    self._populate_table(self.overview_table, rows[:5])
+
+                    # Update System Health cards and CAN-ID distribution
+                    self._update_analysis(rows)
+
                 if not self.live_mode:
                     self.fps_chart.set_series([], None)
                     self.chart_stats.setText(
@@ -1615,7 +1649,7 @@ class Dashboard(QMainWindow):
             "color: #E8F2FF; font-size: 14px; font-weight: bold;"
         )
 
-        badge_text = "LIVE CAN FRAMES ONLY | ECU SIMULATOR RECORDING"
+        badge_text = "LIVE CAN FRAMES ONLY | ECU SIMULATOR (LIVE)"
         self.traffic_badge = QLabel(badge_text)
         self.traffic_badge.setSizePolicy(
             QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
@@ -2199,20 +2233,52 @@ class Dashboard(QMainWindow):
         )
 
     def show_row_detail(self):
-        t = self.traffic_table
-        r = t.currentRow()
-        if r < 0 or t.isRowHidden(r) or not t.item(r, 0):
-            self.row_detail.setText("Select a row to decode it.")
+        """Display readable details for the selected CAN frame."""
+
+        table = self.traffic_table
+        r = table.currentRow()
+
+        if r < 0 or table.isRowHidden(r) or not table.item(r, 0):
+            self.row_detail.setText(
+                "<b>FRAME DETAILS</b><br>"
+                "Select a CAN frame from the table to inspect it."
+            )
             return
-        ts, cid, system, dlc, data, status = (t.item(r, c).text() for c in range(6))
+
+        ts, cid, system, dlc, data, status = (
+        table.item(r, c).text() for c in range(6)
+        )
+
         status = status.replace("●", "").strip()
-        pairs = " ".join(data[i:i + 2] for i in range(0, len(data), 2))
+        pairs = " ".join(
+           data[i:i + 2] for i in range(0, len(data), 2)
+        )
+
         e = html.escape
-        col = "#FF5A66" if status == "ALERT" else "#35E58B"
+        status_color = (
+          "#FF5A66" if status == "ALERT"
+          else "#35E58B" if status == "OK"
+          else "#58B9FF"
+        )
+
         self.row_detail.setText(
-            f"<b>{e(cid)}</b>  ·  {e(system)}  ·  <span style='color:{col}'>{e(status)}</span><br>"
-            f"timestamp {e(ts)}  |  dlc {e(dlc)}<br>"
-            f"bytes: <span style='font-family:Consolas,monospace'>{e(pairs)}</span>"
+          "<div style='font-size:15px;'>"
+          "<h3 style='color:#20B8FF;'>SELECTED CAN FRAME DETAILS</h3>"
+          f"<b>CAN ID:</b> {e(cid)}<br>"
+          f"<b>ECU / System:</b> {e(system)}<br>"
+          f"<b>Timestamp:</b> {e(ts)}<br>"
+          f"<b>DLC:</b> {e(dlc)} bytes<br>"
+          f"<b>Payload (hex):</b> "
+          f"<span style='font-family:Consolas; color:#58B9FF;'>"
+          f"{e(pairs)}</span><br>"
+          f"<b>Status:</b> "
+          f"<span style='color:{status_color}; font-weight:bold;'>"
+          f"{e(status)}</span><br><br>"
+          "<span style='color:#9FB4CE;'>"
+          "DLC = number of data bytes. "
+          "Payload = raw CAN data represented in hexadecimal. "
+          "ECU/System = mapped name based on the CAN ID."
+          "</span></div>"
         )
 
     def export_traffic_csv(self):
@@ -2238,13 +2304,21 @@ class Dashboard(QMainWindow):
             self.traffic_count.setText(f"Export failed: {e}")
 
     def set_zoom(self, value):
-        """Adjust the interface font size while preserving the dark theme."""
+        """Scale dashboard fonts proportionally."""
 
         self.zoom_value.setText(f"{value}%")
+        scale = value / 100.0
 
-        font = self.font()
-        font.setPointSizeF(9 * value / 100)
-        self.centralWidget().setFont(font)
+        for widget in [self] + self.findChildren(QWidget):
+            if not hasattr(widget, "_original_font_size"):
+                widget._original_font_size = widget.font().pointSizeF()
+
+            original = widget._original_font_size
+
+            if original > 0:
+                font = widget.font()
+                font.setPointSizeF(original * scale)
+                widget.setFont(font)
 
     def closeEvent(self, event):
         if hasattr(self, "can_receiver"):
