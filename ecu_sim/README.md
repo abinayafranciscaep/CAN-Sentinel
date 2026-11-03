@@ -470,37 +470,63 @@ The simulator features a real-time in-place terminal instrument cluster that tra
 
 ### Key Cluster Features:
 * **Zero-Flicker In-Place Redraw:** Uses ANSI cursor addressing (`\033[H`) to refresh the dashboard at 10 Hz without clearing the screen or causing terminal flicker.
-* **Simultaneous Live Telemetry History Feed:** Integrates a rolling 50-second interval diagnostic telemetry event log (10 rolling snapshot rows) directly inside the cluster, displaying historical frames, transmission rates, speeds, RPMs, and braking engagement without screen tearing or visual flicker.
-* **Dynamic PRND Transmission & Automatic Gear Indicator:** Automatic gear selector (`[►P◄]`, `[►N◄]`, `[►D1]`–`[►D5]`) coupled to vehicle speed and braking state, with active drive mode indicators (`[PARK ENGAGED]`, `[NEUTRAL IDLE]`, `[FORWARD D-1]`–`[FORWARD D-5]`).
+* **Dynamic Multi-Tier ANSI Color Grading & Alert Thresholds:** Adheres to automotive display ergonomics (ISO 15008 / ISO 2575) using dynamic peripheral color grading across all gauges:
+  * **Engine RPM:** Transitions from Cool Blue (`800–2,400 RPM`, Nominal) to Amber Warning (`2,401–3,200 RPM`, High Load) to Bold Redline Alert (`> 3,200 RPM`, `[⚠ REDLINE LIMIT]`).
+  * **Coolant Temperature:** Dynamically shifts across 4 thermal zones: Cold Warmup Blue (`< 85 °C`, `[WARMUP PHASE]`), Optimal Green (`85–98 °C`, `[COOLANT NOMINAL]`), Elevated Amber (`98.1–102 °C`, `[⚠ ELEVATED TEMP]`), and Overheating Red (`> 102 °C`, `[🔥 OVERHEAT WARN]`).
+  * **Braking Force:** Color-grades from Muted Gray (`0%`, `[○ RELEASED]`) to Amber (`1–50%`, `[● BRAKE ENGAGED]`) to Emergency Red (`> 50%`, `[🚨 HARD BRAKE]`).
+  * **Vehicle Speed & Steering:** Speed dynamically shifts from City Green (`0–60 km/h`) to Highway Cyan (`61–100 km/h`) to High Speed Amber (`> 100 km/h`, `[⚡ HIGH SPEED]`). Steering shifts to Amber during severe lock angles (`> 35°`).
+* **Progressive Multi-Zone Color Gradients:** Rather than rendering each bar in a single flat color, gauges physically illuminate through dedicated automotive operational color zones:
+  * **Speed Bar:** Progressive build-up from City Green (`0–60 km/h`) $\rightarrow$ Highway Cruise Cyan (`61–100 km/h`) $\rightarrow$ High Speed Amber (`> 100 km/h`).
+  * **RPM Rev Bar:** Progressive build-up from Cruise Cyan (`800–2,400 RPM`) $\rightarrow$ Powerband Amber (`2,401–3,200 RPM`) $\rightarrow$ Redline Alert Red (`> 3,200 RPM`).
+  * **Braking Bar:** Progressive build-up from Normal Service Braking Amber (`1–50%`) $\rightarrow$ Emergency Redline Red (`> 50%`).
+  * **Coolant Temp:** Progressive build-up from Warmup Cyan (`< 85 °C`) $\rightarrow$ Nominal Green (`85–98 °C`) $\rightarrow$ Elevated Amber (`98.1–102 °C`) $\rightarrow$ Overheat Red (`> 102 °C`).
+* **Visual Polish & Ergonomic Spacing:** Designed with comfortable vertical row spacing between gauges, full-height dark charcoal solid LCD blocks (`█`) for unlit segments, modern rounded box borders (`╭───╮` / `╰───╯`), and an artificial horizon steering dial (`[◄───────────│►►●───────►]`).
+* **Simultaneous Live Telemetry History Feed:** Integrates a rolling 50-second interval diagnostic telemetry event log (10 rolling snapshot rows) directly inside the cluster, displaying historical frames, transmission rates, speeds, RPMs, and braking engagement without screen tearing or visual flicker. Color grading carries over into the rolling log.
+* **Dynamic PRND Transmission & Automatic Gear Indicator:** Automatic gear selector (`( P )`, `( R )`, `( N )`, `◄[ D1 ]►`–`◄[ D5 ]►`) coupled to vehicle speed and braking state, with active drive mode indicators (`[PARK ENGAGED]`, `[NEUTRAL IDLE]`, `[FORWARD D-1]`–`[FORWARD D-5]`).
 * **Dynamic Graphical Gauges:** Live progress bars for Vehicle Speed, Engine RPM, Brake Pressure, and a center-aligned bidirectional Steering Angle indicator.
 * **Per-ECU Real-Time Activity:** Real-time transmission metrics and frame counters for all 6 CAN IDs alongside their Linux scheduling policies (`SCHED_FIFO` vs `SCHED_OTHER`).
 * **Smart Terminal Detection (`isatty`):** Automatically switches to plain text output if `stdout` is piped to a file (`./ecu_simulator > log.txt`) or a non-interactive CI runner, preventing escape character pollution.
 * **Dual Architecture Support:** Automatically adapts its header and metrics whether running in Single-Threaded or Multi-Threaded distributed mode.
 
+#### Dynamic Threshold Architecture
+
+| Subsystem | Metric Range | ANSI Escape | Dynamic Status Badge | Operational Meaning |
+| :--- | :--- | :--- | :--- | :--- |
+| **Engine RPM** | `800 – 2,400 RPM`<br>`2,401 – 3,200 RPM`<br>`> 3,200 RPM` | `\033[1;36m` (Ice Cyan)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `(Cruise: Nominal)`<br>` HIGH LOAD ZONE `<br>` ⚠ REDLINE LIMIT ` | Powertrain load state and redline proximity. |
+| **Coolant Temp** | `< 85.0 °C`<br>`85.0 – 98.0 °C`<br>`98.1 – 102.0 °C`<br>`> 102.0 °C` | `\033[1;36m` (Ice Cyan)<br>`\033[1;32m` (Green)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `[WARMUP PHASE]`<br>`[COOLANT NOMINAL]`<br>` ⚠ ELEVATED TEMP `<br>` 🔥 OVERHEAT WARN ` | Engine thermal management and cooling loop health. |
+| **Brake System** | `0 %` (Switch OFF)<br>`1 – 50 %`<br>`> 50 – 100 %` | `\033[0;90m` (Gray)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `[○ RELEASED]`<br>` ● BRAKE ENGAGED `<br>` 🚨 HARD BRAKE ` | Hydraulic line pressure and emergency stopping alert. |
+| **Vehicle Speed** | `0 – 60 km/h`<br>`61 – 100 km/h`<br>`> 100 km/h` | `\033[1;32m` (Green)<br>`\033[1;36m` (Cyan)<br>`\033[1;33m` (Amber) | `(City Zone)`<br>`(Highway Cruise)`<br>` ⚡ HIGH SPEED ` | Road speed profile and overspeed advisory. |
+
 ```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
+╭────────────────────────────────────────────────────────────────────────────────────────╮
 │  ► CAN-SENTINEL AUTOMOTIVE ECU CLUSTER  (MULTI-THREADED DISTRIBUTED)                   │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │  Interface: vcan0  │  Kernel: SocketCAN  │  Workers: 7 pthreads (C11 Lock-Free)        │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │  VEHICLE TELEMETRY DYNAMICS                                                            │
 │                                                                                        │
-│  GEAR  : [ P ]  [ R ]  [ N ]  [►D3]   DRIVE MODE: [FORWARD D-3]                        │
-│  SPEED : [████████████░░░░░░░░░░░░]   65 km/h  (Range: 0-130 km/h)                     │
-│  RPM   : [████████████░░░░░░░░░░░░]  2462 RPM   (Idle: 800, Redline: 4000)             │
-│  BRAKE : [████████████████████████]  100 %     [● BRAKE ENGAGED]                       │
-│  STEER : [            o           ]   +2.4 deg (Right Turn)                            │
-│  TEMP  : [██████████████░░░░░░░░░░]   95.0 °C  [COOLANT NOMINAL]                       │
+│  GEAR  : ( P )  ( R )  ( N )  ◄[ D4 ]►   DRIVE MODE: [FORWARD D-4]                     │
+│                                                                                        │
+│  SPEED : [████████████████████████]  105 km/h   ⚡ HIGH SPEED                           │
+│                                                                                        │
+│  RPM   : [████████████████████████]  3350 RPM   ⚠ REDLINE LIMIT                        │
+│                                                                                        │
+│  BRAKE : [████████████████████████]  100 %      🚨 HARD BRAKE                          │
+│                                                                                        │
+│  STEER : [◄───────────│►►●───────►]   +1.2 deg  (Straight  )                           │
+│                                                                                        │
+│  TEMP  : [████████████████████████]   99.5 °C   ⚠ ELEVATED TEMP                        │
+│                                                                                        │
 │  INFO  : [● MEDIA ON ] Nav Gateway: Route Guidance Active                              │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │  PER-ECU TRANSMISSION STATUS & REAL-TIME SCHEDULING                                    │
 │                                                                                        │
-│  [●] 0x0A0  Brake Controller     20 ms ( 50 Hz) │ Frames:     384 │ SCHED_FIFO (80)    │
-│  [●] 0x0B0  Steering Gateway     10 ms (100 Hz) │ Frames:     768 │ SCHED_FIFO (80)    │
-│  [●] 0x100  Powertrain Engine    10 ms (100 Hz) │ Frames:     765 │ SCHED_FIFO (50)    │
-│  [●] 0x200  Speed Sensor         20 ms ( 50 Hz) │ Frames:     384 │ SCHED_FIFO (50)    │
-│  [●] 0x300  Thermal Mgmt        100 ms ( 10 Hz) │ Frames:      76 │ SCHED_OTHER (0)    │
-│  [●] 0x600  Infotainment Media  100 ms ( 10 Hz) │ Frames:      76 │ SCHED_OTHER (0)    │
+│  [●] 0x0A0  Brake Controller     20 ms ( 50 Hz) │ Frames:     768 │ SCHED_FIFO (80)    │
+│  [●] 0x0B0  Steering Gateway     10 ms (100 Hz) │ Frames:    1536 │ SCHED_FIFO (80)    │
+│  [●] 0x100  Powertrain Engine    10 ms (100 Hz) │ Frames:    1530 │ SCHED_FIFO (50)    │
+│  [●] 0x200  Speed Sensor         20 ms ( 50 Hz) │ Frames:     768 │ SCHED_FIFO (50)    │
+│  [●] 0x300  Thermal Mgmt        100 ms ( 10 Hz) │ Frames:     153 │ SCHED_OTHER (0)    │
+│  [●] 0x600  Infotainment Media  100 ms ( 10 Hz) │ Frames:     153 │ SCHED_OTHER (0)    │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │  LIVE TELEMETRY FEED (ROLLING 50-SECOND WINDOW / 10 RECENT SNAPSHOTS)                  │
 │                                                                                        │
@@ -513,10 +539,10 @@ The simulator features a real-time in-place terminal instrument cluster that tra
 │  [00:30] Frames:    9607 │ 320.1 fps │ Speed:  45 km/h │ RPM: 1920 │ Brake: OFF        │
 │  [00:35] Frames:   11208 │ 320.0 fps │ Speed:  58 km/h │ RPM: 2250 │ Brake: OFF        │
 │  [00:40] Frames:   12809 │ 320.1 fps │ Speed:  62 km/h │ RPM: 2350 │ Brake: OFF        │
-│  [00:45] Frames:   14410 │ 320.0 fps │ Speed:  65 km/h │ RPM: 2462 │ Brake: ON (100%)  │
+│  [00:45] Frames:   14410 │ 320.0 fps │ Speed: 105 km/h │ RPM: 3350 │ Brake: ON (100%)  │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
-│  TIME: 00:45 / 01:00  [█████████░░░]   75% │ TOTAL:   14410 frames (Rate: 320.0 fps) │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+│  TIME: 00:45 / 01:00  [████████████]   75% │ TOTAL:   14410 frames (Rate: 320.0 fps) │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
  [Press Ctrl+C to stop simulation cleanly]
 ```
 

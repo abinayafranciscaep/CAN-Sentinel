@@ -3222,26 +3222,29 @@ The dashboard decouples low-level Linux kernel CAN networking from high-fidelity
 
 #### Context & Motivation
 
-Automotive digital instrument clusters (ISO 15008 / ISO 2575) must communicate operating conditions through peripheral color cues rather than forcing the driver to read numerical values. A static monochrome display fails to represent urgent operational transitions. Step 12.9 introduces **Dynamic Multi-Level Color Grading and State Badging** into the ANSI terminal digital cluster:
-* **Engine RPM:** Dynamically transitions from Cool Blue (`800–2,400 RPM`, Cruise Nominal) to Warning Amber (`2,401–3,200 RPM`, High Engine Load) to Bold Redline Alert (`> 3,200 RPM`, `[⚠ REDLINE LIMIT]`).
-* **Coolant Temperature:** Dynamically shifts across four distinct thermal zones: Cold Warmup Blue (`< 85 °C`, `[WARMUP PHASE]`), Optimal Green (`85–98 °C`, `[COOLANT NOMINAL]`), Elevated Amber (`98.1–102 °C`, `[⚠ ELEVATED TEMP]`), and Overheating Red (`> 102 °C`, `[🔥 OVERHEAT WARN]`).
-* **Braking Force:** Color-grades from Muted Gray (`0%`, `[○ RELEASED]`) to Amber (`1–50%`, `[● BRAKE ENGAGED]`) to High-Intensity Emergency Red (`> 50%`, `[🚨 HARD BRAKE]`).
-* **Vehicle Speed & Steering:** Speed dynamically shifts from City Green (`0–60 km/h`) to Highway Cyan (`61–100 km/h`) to High Speed Amber (`> 100 km/h`, `[⚡ HIGH SPEED]`). Steering shifts to Amber during severe lock angles (`> 35°`).
+Automotive digital instrument clusters (ISO 15008 / ISO 2575) must communicate operating conditions through peripheral color cues rather than forcing the driver to read numerical values. A static monochrome display fails to represent urgent operational transitions. Step 12.9 introduces **Dynamic Multi-Zone Progressive Color Gradients and High-Contrast Inverted State Badging** into the ANSI terminal digital cluster:
+* **Progressive Multi-Zone Illumination:** Rather than rendering each bar in a single flat color, gauges physically illuminate across their distinct operational zones:
+  * **Vehicle Speed:** Progressively builds from City Green (`0–60 km/h`) $\rightarrow$ Highway Cruise Cyan (`61–100 km/h`) $\rightarrow$ High Speed Amber (`> 100 km/h`).
+  * **Engine RPM:** Progressively builds from Cruise Cyan (`800–2,400 RPM`) $\rightarrow$ Powerband Amber (`2,401–3,200 RPM`) $\rightarrow$ Redline Alert Red (`> 3,200 RPM`).
+  * **Braking Force:** Progressively builds from Service Braking Amber (`1–50%`) $\rightarrow$ Emergency Red (`> 50%`).
+  * **Coolant Temperature:** Progressively builds from Warmup Cyan (`< 85 °C`) $\rightarrow$ Nominal Green (`85–98 °C`) $\rightarrow$ Elevated Amber (`98.1–102 °C`) $\rightarrow$ Overheat Red (`> 102 °C`).
+* **Solid Segmented LCD Geometry:** Unlit segments are rendered in dark charcoal solid blocks (`█`), perfectly matching the physical height and rectangular geometry of lit blocks.
+* **Inverted Alert Badging:** Urgent safety events trigger high-contrast inverted pills (` 🚨 HARD BRAKE `, ` ⚡ HIGH SPEED `, ` ⚠ REDLINE LIMIT `, ` 🔥 OVERHEAT WARN `).
 * **Simultaneous Rolling Feed:** Dynamic ANSI color grading is propagated directly into the 10-line rolling telemetry log so historical diagnostic snapshots preserve exact threshold violation highlights.
 
 #### Dynamic Threshold Architecture
 
 | Subsystem | Metric Range | ANSI Escape | Dynamic Status Badge | Operational Meaning |
 | :--- | :--- | :--- | :--- | :--- |
-| **Engine RPM** | `800 – 2,400 RPM`<br>`2,401 – 3,200 RPM`<br>`> 3,200 RPM` | `\033[1;34m` (Blue)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `(Cruise: Nominal)`<br>`[HIGH LOAD ZONE]`<br>`[⚠ REDLINE LIMIT]` | Powertrain load state and redline proximity. |
-| **Coolant Temp** | `< 85.0 °C`<br>`85.0 – 98.0 °C`<br>`98.1 – 102.0 °C`<br>`> 102.0 °C` | `\033[1;34m` (Blue)<br>`\033[1;32m` (Green)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `[WARMUP PHASE]`<br>`[COOLANT NOMINAL]`<br>`[⚠ ELEVATED TEMP]`<br>`[🔥 OVERHEAT WARN]` | Engine thermal management and cooling loop health. |
-| **Brake System** | `0 %` (Switch OFF)<br>`1 – 50 %`<br>`> 50 – 100 %` | `\033[0;90m` (Gray)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `[○ RELEASED]`<br>`[● BRAKE ENGAGED]`<br>`[🚨 HARD BRAKE]` | Hydraulic line pressure and emergency stopping alert. |
-| **Vehicle Speed** | `0 – 60 km/h`<br>`61 – 100 km/h`<br>`> 100 km/h` | `\033[1;32m` (Green)<br>`\033[1;36m` (Cyan)<br>`\033[1;33m` (Amber) | `(City Zone)`<br>`(Highway Cruise)`<br>`[⚡ HIGH SPEED]` | Road speed profile and overspeed advisory. |
+| **Engine RPM** | `800 – 2,400 RPM`<br>`2,401 – 3,200 RPM`<br>`> 3,200 RPM` | `\033[1;36m` (Ice Cyan)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `(Cruise: Nominal)`<br>` HIGH LOAD ZONE `<br>` ⚠ REDLINE LIMIT ` | Powertrain load state and redline proximity. |
+| **Coolant Temp** | `< 85.0 °C`<br>`85.0 – 98.0 °C`<br>`98.1 – 102.0 °C`<br>`> 102.0 °C` | `\033[1;36m` (Ice Cyan)<br>`\033[1;32m` (Green)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `[WARMUP PHASE]`<br>`[COOLANT NOMINAL]`<br>` ⚠ ELEVATED TEMP `<br>` 🔥 OVERHEAT WARN ` | Engine thermal management and cooling loop health. |
+| **Brake System** | `0 %` (Switch OFF)<br>`1 – 50 %`<br>`> 50 – 100 %` | `\033[0;90m` (Gray)<br>`\033[1;33m` (Amber)<br>`\033[1;31m` (Red) | `[○ RELEASED]`<br>` ● BRAKE ENGAGED `<br>` 🚨 HARD BRAKE ` | Hydraulic line pressure and emergency stopping alert. |
+| **Vehicle Speed** | `0 – 60 km/h`<br>`61 – 100 km/h`<br>`> 100 km/h` | `\033[1;32m` (Green)<br>`\033[1;36m` (Cyan)<br>`\033[1;33m` (Amber) | `(City Zone)`<br>`(Highway Cruise)`<br>` ⚡ HIGH SPEED ` | Road speed profile and overspeed advisory. |
 
 #### Terminal Output with Active Alerts
 
 ```text
-┌────────────────────────────────────────────────────────────────────────────────────────┐
+╭────────────────────────────────────────────────────────────────────────────────────────╮
 │  ► CAN-SENTINEL AUTOMOTIVE ECU CLUSTER  (MULTI-THREADED DISTRIBUTED)                   │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │  Interface: vcan0  │  Kernel: SocketCAN  │  Workers: 7 pthreads (C11 Lock-Free)        │
@@ -3250,15 +3253,15 @@ Automotive digital instrument clusters (ISO 15008 / ISO 2575) must communicate o
 │                                                                                        │
 │  GEAR  : ( P )  ( R )  ( N )  ◄[ D4 ]►   DRIVE MODE: [FORWARD D-4]                     │
 │                                                                                        │
-│  SPEED : [██████████████████━━━━━━]  105 km/h  [⚡ HIGH SPEED]                          │
+│  SPEED : [████████████████████████]  105 km/h   ⚡ HIGH SPEED                           │
 │                                                                                        │
-│  RPM   : [████████████████████━━━━]  3350 RPM  [⚠ REDLINE LIMIT]                       │
+│  RPM   : [████████████████████████]  3350 RPM   ⚠ REDLINE LIMIT                        │
 │                                                                                        │
-│  BRAKE : [████████████████████████]  100 %     [🚨 HARD BRAKE]                          │
+│  BRAKE : [████████████████████████]  100 %      🚨 HARD BRAKE                          │
 │                                                                                        │
-│  STEER : [◄───────────│►►●───────►]   +1.2 deg (Straight  )                            │
+│  STEER : [◄───────────│►►●───────►]   +1.2 deg  (Straight  )                           │
 │                                                                                        │
-│  TEMP  : [██████████████████━━━━━━]   99.5 °C  [⚠ ELEVATED TEMP]                       │
+│  TEMP  : [████████████████████████]   99.5 °C   ⚠ ELEVATED TEMP                        │
 │                                                                                        │
 │  INFO  : [● MEDIA ON ] Nav Gateway: Route Guidance Active                              │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
@@ -3284,8 +3287,8 @@ Automotive digital instrument clusters (ISO 15008 / ISO 2575) must communicate o
 │  [00:40] Frames:   12809 │ 320.1 fps │ Speed:  62 km/h │ RPM: 2350 │ Brake: OFF        │
 │  [00:45] Frames:   14410 │ 320.0 fps │ Speed: 105 km/h │ RPM: 3350 │ Brake: ON (100%)  │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
-│  TIME: 00:45 / 01:00  [█████████░░░]   75% │ TOTAL:   14410 frames (Rate: 320.0 fps) │
-└────────────────────────────────────────────────────────────────────────────────────────┘
+│  TIME: 00:45 / 01:00  [████████████]   75% │ TOTAL:   14410 frames (Rate: 320.0 fps) │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
  [Press Ctrl+C to stop simulation cleanly]
 ```
 
