@@ -26,13 +26,6 @@ Interactions
 """
 import Dataset_summary
 from openpyxl.styles import styleable
-from openpyxl.styles import styleable
-from openpyxl.styles import styleable
-from openpyxl.styles import styleable
-from openpyxl.styles import styleable
-from openpyxl.styles import styleable
-from openpyxl.styles import styleable
-from openpyxl.styles import styleable
 import csv
 import datetime
 import html
@@ -1155,6 +1148,11 @@ class Dashboard(QMainWindow):
                 "LIVE CAN FEED  •  CONNECTED  |  Connected to CAN sniffer"
             )
         else:
+            self.live_mode = False
+            self.live_frames.clear()
+            self.live_fps_count = 0
+            self.live_fps_samples.clear()
+            self.refresh_live_data(force=True)
             self.update_live_labels(connected=False)
             self.mode_label.setText(
                 "LIVE CAN FEED  •  DISCONNECTED  |  Waiting for CAN sniffer"
