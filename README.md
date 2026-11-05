@@ -1,38 +1,113 @@
-# CAN-Sentinel: Automotive ECU Intrusion Detection System
+# ML Engine
 
-Detects spoofed and malicious CAN bus frames on a virtual Linux SocketCAN network
-using rules, statistics and an Isolation Forest model, and flags the attack on a
-live dashboard with the suspected ECU ID.
+Owner: Abinaya Francisca EP (Team Lead) | Branch: `lead`
 
-Infotact Solutions Cybersecurity Internship, Project 1 (Oct-Nov 2026)
+The ML engine reads CAN traffic (a recorded CSV or the live sniffer socket), checks
+it in one-second windows with three detection layers, and writes one alert JSON
+line per detection for the dashboard.
 
-## Team
-| Member | Role |
-|---|---|
-| Abinaya Francisca EP | Team Lead, Security Lead (threat model, ML engine, integration) |
-| Haleem | Member 1, CAN Systems (vcan0, ECU simulators) |
-| Chetan | Member 2, Attack Engineer (attacker script, C sniffer) |
-| Sadhamail | Member 3, Logging and Dashboard (CSV logger, PyQt dashboard) |
+## Detection layers
 
-## Architecture
-ECU simulators -> vcan0 -> C sniffer -> Unix socket -> ML engine -> alert JSON -> PyQt dashboard
-
-## Folder structure
-| Folder | Contents | Owner |
+| Layer | What it checks | Strength |
 |---|---|---|
-| ecu_sim/ | C ECU simulators, vcan0 setup script | Member 1 |
-| attacker/ | Attack scripts (lab use on vcan0 only) | Member 2 |
-| sniffer/ | C raw CAN socket sniffer, Unix socket bridge | Member 2 |
-| ml_engine/ | Feature extraction, Isolation Forest, detection logic | Lead |
-| dashboard/ | PyQt dashboard, CSV logger | Member 3 |
-| data/ | Sample datasets (large CSVs are not committed) | All |
-| docs/ | Threat model, schemas, reports | All |
+| Rules (R1-R8) | Unknown IDs, DLC mismatch, diagnostic requests, per-ID rate, silent IDs, rolling counter | Fast; names the attack and the CAN ID |
+| Statistics | Any of 34 window features outside its normal range (50% margin) | Large, obvious changes |
+| Isolation Forest | Unusual combinations of features, trained on normal traffic only | Subtle changes; needs 2 abnormal windows in a row |
 
-## Git workflow
-- Each member works only on their own branch (member-1, member-2, member-3, lead).
-- Commit daily with clear messages.
-- Open a Pull Request to main; the team lead reviews and merges.
-- Never push to main.
+| Rule | Detects |
+|---|---|
+| R1 | Unknown ID; flood when the bus is above 2x its normal rate |
+| R2 | Fuzzing: 5 or more unknown IDs in a window |
+| R3 | Fuzzing: payload length does not match DLC |
+| R4 | Diagnostic abuse: 0x7DF while driving |
+| R5 | Spoofing: a baseline ID above 1.5x its normal rate |
+| R6 | Masquerade: a baseline ID silent for 5 of its periods |
+| R7 | Replay: extra frames carry their own valid counter sequence |
+| R8 | Masquerade: normal rate but the real ECU's counter sequence is gone |
 
-## Safety
-All attack code runs only on the isolated virtual bus vcan0 in our own lab setup.
+Alerts for the same attack and ID are not repeated within 2 seconds; flood and fuzz
+alerts are grouped for the whole bus. See `docs/threat_detection_coverage.md` for how
+each rule maps to the threat register.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `features.py` | CAN CSV -> one feature row per window (1 s window, 0.5 s step) |
+| `train_model.py` | Train the statistics layer and Isolation Forest on normal traffic; window-level evaluation |
+| `rules.py` | Rules R1-R8 |
+| `alerts.py` | Alert JSON: severity, affected system, ATT&CK technique |
+| `detect.py` | Offline detector over a CSV; prints time to detect |
+| `live_detector.py` | Live detector on the sniffer socket (or `--replay` a CSV) |
+| `evaluate_alerts.py` | Per-attack scores from the alerts: detection, time to detect, right type, right ID, false alarms |
+| `retrain.py` | One command: data checks, features, training and false-alarm test on the official runs |
+| `counter_check.py` | Rolling-counter check on a recording |
+| `generate_test_traffic.py` | Synthetic normal and attack traffic for development tests |
+| `test_*.py` | Unit tests |
+
+## Setup
+
+Run every command from the repository root.
+
+```
+pip install -r ml_engine/requirements.txt
+python -m pytest ml_engine -q
+```
+
+The tests should end with `27 passed` on Linux. On Windows the one socket test is skipped (`26 passed, 1 skipped`).
+
+## Typical use
+
+Train on the official normal runs (runs 1-2) and test false alarms on run 3:
+
+```
+python ml_engine/retrain.py --train data/normal_run1_MMDD.csv data/normal_run2_MMDD.csv --test data/normal_run3_MMDD.csv --report docs/retrain_report.md
+```
+
+It stops if a run has counter breaks, backward timestamps or a gap over 1 second.
+
+Detect attacks in a recording and score the result:
+
+```
+python ml_engine/detect.py data/attacks_run1.csv --out results_run1.jsonl
+python ml_engine/evaluate_alerts.py data/attacks_run1.csv --alerts results_run1.jsonl --md docs/results_run1.md
+```
+
+Live, with the sniffer running (waits for the sniffer, reconnects if it restarts):
+
+```
+python ml_engine/live_detector.py --alerts alerts.jsonl
+```
+
+Replay a recording through the live code path:
+
+```
+python ml_engine/live_detector.py --replay data/attacks_run1.csv --alerts alerts.jsonl
+```
+
+## Input and output formats
+
+CSV and socket input (`docs/week1_design.md`, Sections 5.1 and 5.2):
+
+```
+timestamp,can_id,dlc,data_hex,label
+1791300000.123456,0x0A0,8,3201000000000017,normal
+```
+
+Alert output (Section 5.3), one JSON object per line:
+
+```json
+{"timestamp":1791300045.667,"attack_type":"replay","suspect_id":"0x0A0","confidence":0.9,"severity":"critical","affected_system":"brake","detection_layer":"rules","technique":"T0855"}
+```
+
+## Status
+
+| Item | Status |
+|---|---|
+| Rules R1-R8, statistics layer, Isolation Forest | Done; tested on simulated data |
+| Live detector on the sniffer socket | Done; live test with the sniffer pending |
+| Evaluation and retraining tools | Done; waiting for the official recordings |
+| Results on real team recordings | Pending: official normal runs and labelled attack runs |
+
+Current simulated-data result: 6/6 attacks detected within 1 second, 0 false alarms,
+precision 1.0. Final results will come from the team's recordings.
