@@ -18,6 +18,10 @@ FLOOD_BUS_RATIO = 2.0       # total bus traffic at twice the normal rate
 FUZZ_UNKNOWN_IDS = 5        # many different unknown IDs in one window
 COUNTER_MIN_STREAM = 5      # frames needed before a counter sequence counts as continuous
 REPLAY_STREAM_SHARE = 0.8   # share of an ID's frames that must sit in continuous sequences
+COUNTER_BREAK_SHARE = 0.5   # over half the steps of an ID break the counter -> not the real ECU
+COUNTER_MIN_FRAMES = 5      # frames needed before judging an ID's counter
+EARLY_FRACTION = 0.5        # a frame less than half a period after the previous one is early
+EARLY_BREAKS_LIMIT = 2      # early frames that also break the counter -> injection
 
 
 def counter_values(data_hex_series):
@@ -53,6 +57,42 @@ def counter_streams(counters):
         else:
             streams.append([value])
     return [len(s) for s in streams]
+
+
+def counter_break_share(counters):
+    """Share of consecutive frames whose counter does not step by exactly +1."""
+    if len(counters) < 2:
+        return 0.0
+    modulus = 16 if max(counters) < 16 else 256
+    breaks = sum(1 for a, b in zip(counters, counters[1:]) if (b - a) % modulus != 1)
+    return breaks / (len(counters) - 1)
+
+
+def early_counter_breaks(id_frames, period):
+    """Frames that arrive far too early AND break the rolling counter.
+
+    The real ECU sends once per period (+/- about 1 ms) and steps its counter
+    by 1. An injected frame lands between two real frames, so it arrives early
+    and its counter does not continue the sequence; the next real frame then
+    looks early and broken too. Checking both conditions avoids false alarms
+    from timing jitter alone (counter still continuous) or a lost frame (late,
+    not early).
+    """
+    times = id_frames["timestamp"].to_numpy()
+    counters = []
+    for data_hex in id_frames["data_hex"]:
+        try:
+            counters.append(int(str(data_hex)[14:16], 16) if len(str(data_hex)) >= 16 else None)
+        except ValueError:
+            counters.append(None)
+    count = 0
+    for i in range(1, len(times)):
+        early = times[i] - times[i - 1] < EARLY_FRACTION * period
+        prev, cur = counters[i - 1], counters[i]
+        broken = prev is not None and cur is not None and (cur - prev) % 256 != 1
+        if early and broken:
+            count += 1
+    return count
 
 
 def classify_injection(id_frames):
@@ -123,6 +163,33 @@ def check_window(frames, window_len):
                 detail = f"{can_id} at {ratio:.1f}x normal rate, {streams} counter sequences"
             results.append(finding(rule, attack, can_id,
                                    min(1.0, 0.4 + (ratio - 1) / 2), detail))
+        # R8: normal rate but the rolling counter is broken and no continuous
+        # sequence from the real ECU is left -> another sender has replaced the
+        # real ECU (masquerade). If the real sequence is still there, extra frames
+        # are being injected instead, which R5/R7 report once the rate rises.
+        elif counts.get(can_id, 0) >= COUNTER_MIN_FRAMES:
+            id_frames = frames[frames["can_id"] == can_id]
+            counters = counter_values(id_frames["data_hex"])
+            share = counter_break_share(counters)
+            lengths = counter_streams(counters)
+            genuine_present = bool(lengths) and max(lengths) >= 0.5 * len(counters)
+            if share > COUNTER_BREAK_SHARE and not genuine_present:
+                results.append(finding("R8_counter_broken", "masquerade", can_id,
+                                       min(1.0, 0.5 + share / 2),
+                                       f"{can_id} counter broken on {share:.0%} of frames"))
+            else:
+                # R9: injection too slow to raise the rate (R5): frames that arrive
+                # early and break the counter while the real ECU is still sending
+                early = early_counter_breaks(id_frames, period)
+                if early >= EARLY_BREAKS_LIMIT:
+                    kind, _ = classify_injection(id_frames)
+                    if kind == "replay":
+                        attack = "replay"
+                    else:
+                        attack = "spoof_brake" if can_id == "0x0A0" else "unknown_anomaly"
+                    results.append(finding("R9_early_frames", attack, can_id,
+                                           min(1.0, 0.5 + early / 20),
+                                           f"{can_id}: {early} early frames with broken counter"))
         times = frames.loc[frames["can_id"] == can_id, "timestamp"]
         if len(times) >= 2:
             max_gap = times.diff().max()

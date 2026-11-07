@@ -16,7 +16,7 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from alerts import make_alert, most_severe, to_json_line  # noqa: E402
-from rules import check_window, counter_streams  # noqa: E402
+from rules import check_window, counter_break_share, counter_streams  # noqa: E402
 
 PERIODS = {"0x0A0": 0.020, "0x0B0": 0.010, "0x100": 0.010,
            "0x200": 0.020, "0x300": 0.100, "0x600": 0.100}
@@ -24,15 +24,17 @@ ALERT_FIELDS = {"timestamp", "attack_type", "suspect_id", "confidence", "severit
                 "affected_system", "detection_layer", "technique"}
 
 
-def window(extra=None, skip_id=None):
+def window(extra=None, skip_id=None, drop_id=None):
+    """One second of normal traffic; each ID has its own rolling counter in byte 7."""
     rows = []
     for can_id, period in PERIODS.items():
-        t = 0.0
+        t, counter = 0.0, 250  # start near 255 so the window includes the wrap to 0
         while t < 1.0:
-            if not (skip_id == can_id and 0.2 < t < 0.6):
+            if not (skip_id == can_id and 0.2 < t < 0.6) and not (drop_id == can_id and counter == 260):
                 rows.append({"timestamp": t, "can_id": can_id, "dlc": 8,
-                             "data_hex": "3201000000000017"})
+                             "data_hex": f"32010000000000{counter % 256:02X}"})
             t += period
+            counter += 1
     rows += extra or []
     df = pd.DataFrame(rows).sort_values("timestamp").reset_index(drop=True)
     df["dlc_mismatch"] = (df["data_hex"].str.len() != df["dlc"] * 2).astype(int)
@@ -138,3 +140,43 @@ def test_spoof_with_fixed_counter_stays_spoof():
     findings = check_window(rows, 1.0)
     assert any(f["attack_type"] == "spoof_brake" for f in findings)
     assert "replay" not in attack_types(findings)
+
+
+def test_one_lost_frame_is_not_an_attack():
+    # a single dropped frame skips one counter value; this must not raise an alert
+    assert check_window(window(drop_id="0x0B0"), 1.0) == []
+    assert counter_break_share([1, 2, 4, 5, 6, 7]) == 0.2
+
+
+def test_masquerade_detected_by_counter():
+    # the real steering ECU is gone; an attacker sends 0x0B0 at the normal rate
+    # but with a fixed counter, so there is no rate change and no gap
+    rows = window()
+    rows = rows[rows["can_id"] != "0x0B0"]
+    fake = pd.DataFrame([{"timestamp": i * 0.01, "can_id": "0x0B0", "dlc": 8,
+                          "data_hex": "0000000000000000", "dlc_mismatch": 0} for i in range(100)])
+    rows = pd.concat([rows, fake]).sort_values("timestamp").reset_index(drop=True)
+    findings = check_window(rows, 1.0)
+    assert any(f["rule"] == "R8_counter_broken" and f["suspect_id"] == "0x0B0" for f in findings)
+    assert attack_types(findings) == {"masquerade"}
+
+
+def test_low_rate_spoof_detected():
+    # only 3 fake brake frames in one second: too few for the rate rule (R5),
+    # but each arrives early with a counter that breaks the real sequence
+    fake = [{"timestamp": t, "can_id": "0x0A0", "dlc": 8, "data_hex": "6401000000000099",
+             "dlc_mismatch": 0} for t in (0.205, 0.505, 0.805)]
+    findings = check_window(window(fake), 1.0)
+    assert not any(f["rule"] == "R5_rate_exceeded" for f in findings)
+    assert any(f["rule"] == "R9_early_frames" and f["attack_type"] == "spoof_brake"
+               and f["suspect_id"] == "0x0A0" for f in findings)
+
+
+def test_timing_jitter_alone_is_not_an_attack():
+    # a real brake frame logged 15 ms early (only 5 ms after the previous one),
+    # but its counter still steps by 1, so this is not an injection
+    rows = window()
+    brake = rows.index[rows["can_id"] == "0x0A0"][10]
+    rows.loc[brake, "timestamp"] -= 0.015
+    rows = rows.sort_values("timestamp").reset_index(drop=True)
+    assert check_window(rows, 1.0) == []
