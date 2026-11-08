@@ -14,6 +14,7 @@ Usage (from the repository root):
     python ml_engine/generate_test_traffic.py normal data/synthetic_normal.csv --seconds 120
     python ml_engine/generate_test_traffic.py flood data/synthetic_flood.csv
     python ml_engine/generate_test_traffic.py all data/synthetic_all_attacks.csv
+    python ml_engine/generate_test_traffic.py lowrate_spoof data/synthetic_lowrate_spoof.csv
 
 Author: Abinaya Francisca EP (Team Lead)
 """
@@ -34,6 +35,9 @@ BASELINE = {
 JITTER = 0.001        # +/- 1 ms timing jitter
 START = 1791300000.0  # fixed start time so files are reproducible
 ATTACKS = ["flood", "spoof_brake", "replay", "fuzz", "masquerade", "diag_abuse"]
+# Extra test cases, not part of "all" (so the six-attack file stays the same)
+EXTRA_ATTACKS = ["lowrate_spoof"]
+LOWRATE_FPS = 2  # fake brake frames per second in lowrate_spoof
 
 
 def normal_payload(can_id, t, counter):
@@ -98,6 +102,14 @@ def attack_frames(kind, start, end, rng, recorded=None):
         while t < end:
             rows.append([START + t, "0x0B0", 8, "0000000000000000", kind])
             t += 0.010
+    elif kind == "lowrate_spoof":
+        # A careful attacker: only a few fake brake frames per second, each with a
+        # random counter, so the 0x0A0 rate rises by just 4% (labelled spoof_brake)
+        while t < end:
+            counter = rng.randint(0, 255)
+            rows.append([START + t + rng.uniform(0.003, 0.017), "0x0A0", 8,
+                         f"64010000000000{counter:02X}", "spoof_brake"])
+            t += 1.0 / LOWRATE_FPS
     elif kind == "diag_abuse":
         while t < end:
             rows.append([START + t, "0x7DF", 8, "0211010000000000", kind])  # ECU reset request
@@ -126,7 +138,7 @@ def build(kind, seconds, seed):
 
 def main():
     p = argparse.ArgumentParser(description="CAN-Sentinel synthetic traffic generator")
-    p.add_argument("kind", choices=["normal", "all"] + ATTACKS)
+    p.add_argument("kind", choices=["normal", "all"] + ATTACKS + EXTRA_ATTACKS)
     p.add_argument("output_csv")
     p.add_argument("--seconds", type=float, default=60, help="length of the recording")
     p.add_argument("--seed", type=int, default=1, help="random seed for reproducible files")
