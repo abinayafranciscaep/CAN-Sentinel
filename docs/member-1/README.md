@@ -3458,3 +3458,78 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
 2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, simultaneous rolling telemetry logging, and dynamic color grading with threshold alerts in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, and 12.9) complete.
 3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.
+
+## Known Limitations
+
+- Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
+- Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter. In one 10-second capture (8.11) individual intervals reached 35–46 ms for the 10 ms and 20 ms ECUs, even though the averages matched the nominal periods. Timing features computed from this traffic (inter-arrival time) will therefore include occasional outliers.
+- Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
+- Signal values are bounded random walks, not a physical vehicle model. Step 10 improves this by deriving RPM from speed and holding the brake switch for 2–6 s, but the signals are still simulated.
+- Signals are updated every 50 ms, so the faster ECUs (10 ms and 20 ms) repeat the latest value in several consecutive frames (10.10, 10.12). Features that depend on frame-to-frame changes see steps rather than a smooth signal.
+- The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
+
+---
+
+## Expected Outcome
+
+The implementation provides a stable virtual automotive CAN environment in which six simulated ECUs communicate through `vcan0` and continuously generate legitimate baseline traffic:
+
+**Brake → Steering → Engine RPM → Vehicle Speed → Engine Temperature → Infotainment**
+
+Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined rate of 320 frames per second (measured average ≈ 320.03 frames/s, Step 8). After Step 10 the signals behave more like a vehicle: the brake switch holds for 2–6 s, brake pressure follows it, and engine RPM follows vehicle speed. A random seed can repeat a run. This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
+
+## Next Steps
+
+1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
+2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, simultaneous rolling telemetry logging, and dynamic color grading with threshold alerts in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, and 12.9) complete.
+3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.
+
+## Known Limitations
+
+- Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
+- Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter. In one 10-second capture (8.11) individual intervals reached 35–46 ms for the 10 ms and 20 ms ECUs, even though the averages matched the nominal periods. Timing features computed from this traffic (inter-arrival time) will therefore include occasional outliers.
+- Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
+- Signal values are bounded random walks, not a physical vehicle model. Step 10 improves this by deriving RPM from speed and holding the brake switch for 2–6 s, but the signals are still simulated.
+- Signals are updated every 50 ms, so the faster ECUs (10 ms and 20 ms) repeat the latest value in several consecutive frames (10.10, 10.12). Features that depend on frame-to-frame changes see steps rather than a smooth signal.
+- The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
+
+---
+
+## Expected Outcome
+
+The implementation provides a stable virtual automotive CAN environment in which six simulated ECUs communicate through `vcan0` and continuously generate legitimate baseline traffic:
+
+**Brake → Steering → Engine RPM → Vehicle Speed → Engine Temperature → Infotainment**
+
+Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined rate of 320 frames per second (measured average ≈ 320.03 frames/s, Step 8). After Step 10 the signals behave more like a vehicle: the brake switch holds for 2–6 s, brake pressure follows it, and engine RPM follows vehicle speed. A random seed can repeat a run. This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
+
+## Next Steps
+
+1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
+2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, simultaneous rolling telemetry logging, and dynamic color grading with threshold alerts in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, and 12.9) complete.
+3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.
+
+## Known Limitations
+
+- Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
+- Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter. In one 10-second capture (8.11) individual intervals reached 35–46 ms for the 10 ms and 20 ms ECUs, even though the averages matched the nominal periods. Timing features computed from this traffic (inter-arrival time) will therefore include occasional outliers.
+- Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
+- Signal values are bounded random walks, not a physical vehicle model. Step 10 improves this by deriving RPM from speed and holding the brake switch for 2–6 s, but the signals are still simulated.
+- Signals are updated every 50 ms, so the faster ECUs (10 ms and 20 ms) repeat the latest value in several consecutive frames (10.10, 10.12). Features that depend on frame-to-frame changes see steps rather than a smooth signal.
+- The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
+
+---
+
+## Expected Outcome
+
+The implementation provides a stable virtual automotive CAN environment in which six simulated ECUs communicate through `vcan0` and continuously generate legitimate baseline traffic:
+
+**Brake → Steering → Engine RPM → Vehicle Speed → Engine Temperature → Infotainment**
+
+Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined rate of 320 frames per second (measured average ≈ 320.03 frames/s, Step 8). After Step 10 the signals behave more like a vehicle: the brake switch holds for 2–6 s, brake pressure follows it, and engine RPM follows vehicle speed. A random seed can repeat a run. This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
+
+## Next Steps
+
+1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
+2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, simultaneous rolling telemetry logging, and dynamic color grading with threshold alerts in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, and 12.9) complete.
+3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.
