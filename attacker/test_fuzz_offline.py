@@ -76,5 +76,22 @@ class FuzzOfflineTests(unittest.TestCase):
             self.assertTrue(all(row["label"] == "fuzz" for row in rows))
 
 
+    def test_negative_timestamp_rejected(self):
+        with self.assertRaisesRegex(ValueError, "finite and positive"):
+            generate_cases(count=2, start_timestamp=-1)
+
+    def test_zero_timestamp_rejected(self):
+        with self.assertRaisesRegex(ValueError, "finite and positive"):
+            generate_cases(count=2, start_timestamp=0)
+
+    def test_nan_timestamp_rejected(self):
+        with self.assertRaisesRegex(ValueError, "finite and positive"):
+            generate_cases(count=2, start_timestamp=float("nan"))
+
+    def test_infinite_timestamp_rejected(self):
+        with self.assertRaisesRegex(ValueError, "finite and positive"):
+            generate_cases(count=2, start_timestamp=float("inf"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

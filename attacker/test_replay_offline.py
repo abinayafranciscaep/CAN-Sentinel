@@ -4,6 +4,7 @@
 import csv
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from replay_offline import read_recording
@@ -78,6 +79,71 @@ class ReplayOfflineTests(unittest.TestCase):
             path = self.write_csv(directory, rows)
             with self.assertRaisesRegex(ValueError, "non-decreasing"):
                 read_recording(path)
+
+
+    def test_empty_recording_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_csv(directory, [])
+            with self.assertRaisesRegex(ValueError, "at least one data row"):
+                read_recording(path)
+
+    def test_nan_timestamp_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_csv(
+                directory, [self.valid_row(timestamp="NaN")]
+            )
+            with self.assertRaisesRegex(ValueError, "timestamp must be finite"):
+                read_recording(path)
+
+    def test_infinite_timestamp_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_csv(
+                directory, [self.valid_row(timestamp="Infinity")]
+            )
+            with self.assertRaisesRegex(ValueError, "timestamp must be finite"):
+                read_recording(path)
+
+
+    def test_jsonl_export_contains_valid_records(self):
+        import json
+        from replay_offline import main
+
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = self.write_csv(directory, [self.valid_row()])
+            output_path = Path(directory) / "output" / "validated.jsonl"
+
+            with patch(
+                "sys.argv",
+                ["replay_offline.py", str(input_path), "--output", str(output_path)],
+            ):
+                result = main()
+
+            self.assertEqual(result, 0)
+            records = [
+                json.loads(line)
+                for line in output_path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["can_id"], "0x0A0")
+            self.assertEqual(records[0]["label"], "normal")
+
+    def test_jsonl_export_write_failure_returns_error(self):
+        from replay_offline import main
+
+        with tempfile.TemporaryDirectory() as directory:
+            input_path = self.write_csv(directory, [self.valid_row()])
+            output_path = Path(directory) / "blocked.jsonl"
+
+            with (
+                patch(
+                    "sys.argv",
+                    ["replay_offline.py", str(input_path), "--output", str(output_path)],
+                ),
+                patch.object(Path, "open", side_effect=OSError("simulated write failure")),
+            ):
+                result = main()
+
+            self.assertEqual(result, 1)
 
 
 if __name__ == "__main__":

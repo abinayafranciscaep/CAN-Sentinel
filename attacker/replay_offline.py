@@ -4,6 +4,7 @@
 import argparse
 import csv
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -32,6 +33,9 @@ def read_recording(path):
                 dlc = int(row["dlc"])
                 data_hex = row["data_hex"]
                 label = row["label"]
+
+                if not math.isfinite(timestamp):
+                    raise ValueError("timestamp must be finite")
 
                 if timestamp <= 0:
                     raise ValueError("timestamp must be positive")
@@ -74,6 +78,9 @@ def read_recording(path):
                 "label": label,
             })
             previous_timestamp = timestamp
+
+    if not records:
+        raise ValueError("recording must contain at least one data row")
 
     return records
 

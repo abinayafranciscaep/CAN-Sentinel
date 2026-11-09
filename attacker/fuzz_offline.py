@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+import math
 import random
 import sys
 from pathlib import Path
@@ -14,6 +15,14 @@ def generate_cases(count=20, seed=42, start_timestamp=1791300100.0):
     """Return reproducible synthetic CAN test cases."""
     if not 1 <= count <= 1000:
         raise ValueError("count must be between 1 and 1000")
+
+    if (
+        isinstance(start_timestamp, bool)
+        or not isinstance(start_timestamp, (int, float))
+        or not math.isfinite(start_timestamp)
+        or start_timestamp <= 0
+    ):
+        raise ValueError("start_timestamp must be finite and positive")
 
     rng = random.Random(seed)
     records = []

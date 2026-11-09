@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+import math
 import sys
 from pathlib import Path
 
@@ -11,6 +12,14 @@ FIELDS = ["timestamp", "can_id", "dlc", "data_hex", "label"]
 
 def generate_cases(start_timestamp=1791300200.0):
     """Create normal, gap, and synthetic masquerade-labelled records."""
+    if (
+        isinstance(start_timestamp, bool)
+        or not isinstance(start_timestamp, (int, float))
+        or not math.isfinite(start_timestamp)
+        or start_timestamp <= 0
+    ):
+        raise ValueError("start_timestamp must be finite and positive")
+
     samples = [
         (0.000, "3201000000000017", "normal"),
         (0.020, "3301000000000018", "normal"),
