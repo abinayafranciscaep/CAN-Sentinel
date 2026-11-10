@@ -29,17 +29,25 @@ test: test_payloads
 	@echo "===================================================="
 	./test_payloads
 
-# Setup and bring up the virtual CAN interface (vcan0)
+# Setup and bring up the virtual CAN interfaces (vcan0 and vcan1 for gateway)
 setup-vcan:
-	@echo "Verifying vcan0 virtual interface..."
+	@echo "Verifying virtual CAN interfaces (vcan0, vcan1)..."
+	@sudo modprobe vcan
 	@if ip link show vcan0 > /dev/null 2>&1; then \
 		echo "vcan0 is already configured and active."; \
 	else \
 		echo "Configuring vcan0..."; \
-		sudo modprobe vcan && \
 		(sudo ip link add dev vcan0 type vcan 2>/dev/null || true) && \
 		sudo ip link set up vcan0 && \
 		echo "vcan0 successfully brought up."; \
+	fi
+	@if ip link show vcan1 > /dev/null 2>&1; then \
+		echo "vcan1 is already configured and active."; \
+	else \
+		echo "Configuring vcan1..."; \
+		(sudo ip link add dev vcan1 type vcan 2>/dev/null || true) && \
+		sudo ip link set up vcan1 && \
+		echo "vcan1 successfully brought up."; \
 	fi
 
 # Launch the real-time Web-Based EV Sport Dashboard bridge
@@ -71,7 +79,7 @@ help:
 	@echo "CAN-Sentinel Build System Targets:"
 	@echo "  make            - Build ecu_simulator, test_payloads, and brake_receiver"
 	@echo "  make test       - Build and run the automated unit test suite"
-	@echo "  make setup-vcan - Configure and activate the vcan0 interface"
+	@echo "  make setup-vcan - Configure and activate virtual CAN interfaces (vcan0 & vcan1)"
 	@echo "  make dashboard  - Launch the real-time Web EV Sport Dashboard (http://localhost:8080)"
 	@echo "  make clean      - Remove compiled executable binaries"
 	@echo "  make help       - Display this help message"

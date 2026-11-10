@@ -156,7 +156,7 @@ Available build targets:
 | `make` / `make all` | Compile binaries | Builds `ecu_simulator` and `test_payloads` with `-Wall -Wextra -Wpedantic -std=c11 -O2 -pthread` |
 | `make test` | Run test suite | Compiles and executes the 7/7 automated unit test suite |
 | `make dashboard` | Launch dashboard | Launches the EV Sport Digital Dashboard & WebSocket bridge (`http://localhost:8080`) |
-| `make setup-vcan` | Setup network | Checks and configures the Linux `vcan0` virtual interface |
+| `make setup-vcan` | Setup network | Configures and activates virtual CAN interfaces (`vcan0` vehicle bus & `vcan1` protected safety bus) |
 | `make clean` | Clean workspace | Safely deletes compiled executable binaries |
 | `make help` | Help menu | Prints target descriptions and usage guide |
 

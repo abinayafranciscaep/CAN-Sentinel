@@ -2765,7 +2765,7 @@ Results: 7 / 7 tests passed (0 failed).
 | :---: | :--- | :--- |
 | **`all`** | `make` or `make all` | Compiles both `ecu_simulator` and `test_payloads` using `-Wall -Wextra -Wpedantic -std=c11 -O2`. Uses timestamp dependency tracking so clean builds don't recompile. |
 | **`test`** | `make test` | Builds `test_payloads` if modified, then immediately executes the automated unit test suite. |
-| **`setup-vcan`** | `make setup-vcan` | Checks if `vcan0` is active. If missing, loads `vcan` kernel module and creates and configures the virtual CAN network interface. |
+| **`setup-vcan`** | `make setup-vcan` | Loads `vcan` kernel module and verifies/configures both `vcan0` (vehicle bus) and `vcan1` (protected safety domain bus). |
 | **`clean`** | `make clean` | Safely removes compiled build artifacts (`rm -f ecu_simulator test_payloads`). |
 | **`help`** | `make help` | Displays an interactive help menu with target descriptions. |
 
