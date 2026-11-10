@@ -81,6 +81,7 @@ typedef struct {
 typedef struct {
     const char *arch_mode;
     const char *workers_desc;
+    const char *ifname;
     bool is_multithreaded;
     unsigned long total_frames;
     double fps;
@@ -98,6 +99,7 @@ typedef struct {
 
 static volatile sig_atomic_t running = 1;
 static bool use_dashboard = true;
+static char can_interface[IFNAMSIZ] = "vcan0";
 
 #define TELEMETRY_HISTORY_LINES 10
 
@@ -256,7 +258,7 @@ static long random_range(long minimum, long maximum)
          + (long)(rand() % (unsigned long)(maximum - minimum + 1));
 }
 
-/* Helper to open and bind an independent SocketCAN socket to vcan0 */
+/* Helper to open and bind an independent SocketCAN socket */
 static int open_vcan_socket(const char *ifname)
 {
     int s = socket(PF_CAN, SOCK_RAW, CAN_RAW);
@@ -266,7 +268,7 @@ static int open_vcan_socket(const char *ifname)
 
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name) - 1);
+    snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", ifname);
 
     if (ioctl(s, SIOCGIFINDEX, &ifr) < 0) {
         close(s);
@@ -580,10 +582,10 @@ static void render_dashboard_cluster(const TelemetrySnapshot *s)
     printf("%s├────────────────────────────────────────────────────────────────────────────────────────┤%s\033[K\n", ANSI_CYAN, ANSI_RESET);
 
     /* Architecture meta line */
-    int meta_pad = 34 - (int)strlen(s->workers_desc);
+    int meta_pad = 43 - (int)strlen(s->ifname) - (int)strlen(s->workers_desc);
     if (meta_pad < 0) meta_pad = 0;
-    printf("%s│%s  Interface: %svcan0%s  │  Kernel: %sSocketCAN%s  │  Workers: %s%s%s%*s\033[K\033[90G%s│%s\n",
-           ANSI_CYAN, ANSI_RESET, ANSI_WHITE, ANSI_RESET, ANSI_WHITE, ANSI_RESET,
+    printf("%s│%s  Interface: %s%s%s  │  Kernel: %sSocketCAN%s  │  Workers: %s%s%s%*s\033[K\033[90G%s│%s\n",
+           ANSI_CYAN, ANSI_RESET, ANSI_WHITE, s->ifname, ANSI_RESET, ANSI_WHITE, ANSI_RESET,
            ANSI_GREEN, s->workers_desc, ANSI_RESET,
            meta_pad, "", ANSI_CYAN, ANSI_RESET);
     printf("%s├────────────────────────────────────────────────────────────────────────────────────────┤%s\033[K\n", ANSI_CYAN, ANSI_RESET);
@@ -832,9 +834,9 @@ static int st_send_frame(int socket_fd, ECU *ecu, int index)
 
 static int run_singlethreaded(long duration_sec)
 {
-    int socket_fd = open_vcan_socket("vcan0");
+    int socket_fd = open_vcan_socket(can_interface);
     if (socket_fd < 0) {
-        perror("Failed to bind CAN socket to vcan0");
+        fprintf(stderr, "Failed to bind CAN socket to %s: %s\n", can_interface, strerror(errno));
         return EXIT_FAILURE;
     }
 
@@ -846,7 +848,7 @@ static int run_singlethreaded(long duration_sec)
 
     if (!use_dashboard) {
         printf("Architecture: Single-Threaded Bounded Scheduler\n");
-        printf("CAN interface: vcan0\n");
+        printf("CAN interface: %s\n", can_interface);
         printf("Protocol: six periodic ECU frames, DLC 8\n");
         printf("Timing jitter: approximately +/-1 ms\n");
         if (duration_sec > 0) {
@@ -911,6 +913,7 @@ static int run_singlethreaded(long duration_sec)
                 TelemetrySnapshot snap;
                 snap.arch_mode = "SINGLE-THREADED BOUNDED LOOP";
                 snap.workers_desc = "1 Main Thread (Cooperative Yield)";
+                snap.ifname = can_interface;
                 snap.is_multithreaded = false;
                 snap.total_frames = total_frames;
                 snap.fps = fps;
@@ -1131,10 +1134,10 @@ static void *ecu_worker_thread(void *arg)
     }
 
     /* Open an independent SocketCAN socket to model independent CAN hardware */
-    int socket_fd = open_vcan_socket("vcan0");
+    int socket_fd = open_vcan_socket(can_interface);
     if (socket_fd < 0) {
-        fprintf(stderr, "[ECU %s (0x%03X)] Failed to bind SocketCAN: %s\n",
-                cfg->name, cfg->can_id, strerror(errno));
+        fprintf(stderr, "[ECU %s (0x%03X)] Failed to bind SocketCAN on %s: %s\n",
+                cfg->name, cfg->can_id, can_interface, strerror(errno));
         return NULL;
     }
 
@@ -1251,7 +1254,7 @@ static int run_multithreaded(long duration_sec)
         printf("CAN-Sentinel ECU Simulator (Multi-Threaded Architecture)\n");
         printf("====================================================================\n");
         printf("Concurrency: 6 Autonomous ECU POSIX Threads + 1 Physics Engine Thread\n");
-        printf("CAN interface: vcan0 (Dedicated SocketCAN socket per ECU thread)\n");
+        printf("CAN interface: %s (Dedicated SocketCAN socket per ECU thread)\n", can_interface);
         printf("Synchronization: C11 Lock-Free Atomics (<stdatomic.h> zero mutex contention)\n");
         printf("Real-Time Scheduling:\n");
         printf("  - 0x0A0 (Brake)      & 0x0B0 (Steering): SCHED_FIFO Priority 80 (ASIL-D)\n");
@@ -1316,6 +1319,7 @@ static int run_multithreaded(long duration_sec)
                 TelemetrySnapshot snap;
                 snap.arch_mode = "MULTI-THREADED DISTRIBUTED";
                 snap.workers_desc = "7 pthreads (C11 Lock-Free)";
+                snap.ifname = can_interface;
                 snap.is_multithreaded = true;
                 snap.total_frames = frames;
                 snap.fps = fps;
@@ -1413,13 +1417,14 @@ static void print_usage(const char *prog_name)
     printf("CAN-Sentinel ECU Simulator\n");
     printf("Usage: %s [OPTIONS] [seed]\n\n", prog_name);
     printf("Options:\n");
-    printf("  --threads, -t        Enable distributed multi-threaded architecture (6 pthreads + atomics)\n");
-    printf("  --plain, -p          Disable visual dashboard and use scrolling text telemetry\n");
-    printf("  --duration, -d <sec> Auto-stop simulation after specified duration in seconds\n");
-    printf("  --log, -l <file>     Stream plain text telemetry to specified log file while running\n");
-    printf("  --help, -h           Show this help message\n\n");
+    printf("  --interface, -i <name> Set CAN network interface (default: vcan0)\n");
+    printf("  --threads, -t          Enable distributed multi-threaded architecture (6 pthreads + atomics)\n");
+    printf("  --plain, -p            Disable visual dashboard and use scrolling text telemetry\n");
+    printf("  --duration, -d <sec>   Auto-stop simulation after specified duration in seconds\n");
+    printf("  --log, -l <file>       Stream plain text telemetry to specified log file while running\n");
+    printf("  --help, -h             Show this help message\n\n");
     printf("Positional:\n");
-    printf("  [seed]               Optional unsigned 32-bit integer for deterministic PRNG\n");
+    printf("  [seed]                 Optional unsigned 32-bit integer for deterministic PRNG\n");
 }
 
 int main(int argc, char *argv[])
@@ -1439,6 +1444,13 @@ int main(int argc, char *argv[])
             multithreaded_mode = true;
         } else if (strcmp(argv[i], "--plain") == 0 || strcmp(argv[i], "-p") == 0) {
             use_dashboard = false;
+        } else if (strcmp(argv[i], "--interface") == 0 || strcmp(argv[i], "-i") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --interface requires a network interface argument (e.g. vcan0, vcan1)\n");
+                return EXIT_FAILURE;
+            }
+            i++;
+            snprintf(can_interface, sizeof(can_interface), "%s", argv[i]);
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return EXIT_SUCCESS;

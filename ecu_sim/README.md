@@ -39,6 +39,7 @@ The `ecu_sim` module is completely self-contained for Member 1 deliverables:
 ```text
 ecu_sim/
 ├── ecu_simulator.c        # Multi-threaded C SocketCAN 6-ECU simulator (pthreads, atomics)
+├── brake_receiver.c       # Fail-Safe Brake Actuator receiver on vcan1 (ISO 26262 Safe State)
 ├── test_payloads.c        # Automated unit verification suite (7/7 tests passed)
 ├── can_sentinel.dbc       # Vector DBC specification defining all 6 messages & signals
 ├── Makefile               # Unified build automation (make, test, dashboard, clean)
@@ -462,6 +463,9 @@ The simulator features a high-concurrency multi-threaded distributed architectur
 
 # 5. Live visual cluster with simultaneous background file logging
 ./ecu_sim/ecu_simulator --threads --log telemetry.log
+
+# 6. Specify custom CAN network interface (e.g. vcan0 vehicle bus or vcan1 protected safety domain)
+./ecu_sim/ecu_simulator -i vcan1
 ```
 
 ## Modern ANSI Digital Instrument Cluster
@@ -637,6 +641,42 @@ At 20 Hz, `bridge.py` emits the following structured JSON frame to all connected
   }
 }
 ```
+
+---
+
+## Fail-Safe Brake Actuator Receiver (`brake_receiver`)
+
+In modern automotive functional safety (ISO 26262 ASIL-D), safety-critical actuators cannot simply halt or freeze when incoming communications cease. To support CAN-Sentinel's active **Virtual Security Gateway (Detect -> Block)** architecture across dual virtual buses (`vcan0` vehicle bus and `vcan1` protected safety domain), `brake_receiver.c` implements a dedicated C actuator listener with hardware filtering and an automatic **100 ms Loss-of-Signal Safe-State fallback**.
+
+### Architecture & Safety Mechanics:
+* **Hardware-Level CAN Filter:** Binds to `vcan1` (or user-specified interface) and sets `CAN_RAW_FILTER` exclusively for CAN ID `0x0A0` (`Brake Controller`), discarding all other broadcast traffic.
+* **100 ms Loss-of-Signal Heartbeat Monitor:**
+  - Brake frames are transmitted periodically every 20 ms (50 Hz).
+  - Uses `poll()` with 10 ms resolution to calculate continuous inter-arrival time ($\Delta t$).
+  - If no legitimate frame arrives for **$> 100\text{ ms}$** (5 consecutive missed cycles), the node transitions immediately from `STATE_OPERATIONAL` to `STATE_SAFE_STATE`.
+  - In Safe State, it flags a prominent alert (`[ 🚨 SAFE STATE ACTIVATED: FAIL-SAFE DEFAULT ENGAGED ]`) and engages mechanical fail-safe braking defaults.
+* **Resynchronization:** When valid `0x0A0` frames resume (e.g. gateway quarantine expires or release command is issued), the receiver automatically re-synchronizes and returns to `STATE_OPERATIONAL`.
+* **Zero-Flicker ANSI Instrument Display:** Displays real-time brake pressure bar, pedal switch indicator, Byte 7 rolling counter progression ($0 \rightarrow 255$), and live heartbeat statistics.
+
+### Usage & CLI Options:
+```bash
+# Build binary
+make brake_receiver
+
+# 1. Default execution: listen on vcan1 with 100 ms safe-state timeout
+./brake_receiver
+
+# 2. Listen on vcan0 (direct simulator link)
+./brake_receiver -i vcan0
+
+# 3. Custom timeout threshold (e.g. 150 ms)
+./brake_receiver -i vcan1 -t 150
+
+# 4. Headless plain scrolling output (for automated log recording)
+./brake_receiver -i vcan1 --plain
+```
+
+---
 
 
 ## Known limitations

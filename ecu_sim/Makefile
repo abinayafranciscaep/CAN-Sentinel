@@ -6,17 +6,20 @@
 CC      := gcc
 CFLAGS  := -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread
 LDLIBS  := -lpthread -lrt
-TARGETS := ecu_simulator test_payloads
+TARGETS := ecu_simulator test_payloads brake_receiver
 
 .PHONY: all clean test setup-vcan dashboard help
 
-# Default target: compile both simulator and automated test runner
+# Default target: compile simulator, automated test runner, and brake receiver
 all: $(TARGETS)
 
 ecu_simulator: ecu_simulator.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
 
 test_payloads: test_payloads.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+brake_receiver: brake_receiver.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 # Run the 7/7 automated unit test suite
@@ -66,7 +69,7 @@ clean:
 # Display help menu
 help:
 	@echo "CAN-Sentinel Build System Targets:"
-	@echo "  make            - Build both ecu_simulator and test_payloads (with pthreads)"
+	@echo "  make            - Build ecu_simulator, test_payloads, and brake_receiver"
 	@echo "  make test       - Build and run the automated unit test suite"
 	@echo "  make setup-vcan - Configure and activate the vcan0 interface"
 	@echo "  make dashboard  - Launch the real-time Web EV Sport Dashboard (http://localhost:8080)"

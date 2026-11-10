@@ -51,6 +51,11 @@
     - [Step 12.8: Simultaneous Live Telemetry Feed & In-Place Diagnostic Logging](#step-128-simultaneous-live-telemetry-feed--in-place-diagnostic-logging)
     - [Step 12.9: Dynamic Color Grading and Multi-Level Threshold Alerts](#step-129-dynamic-color-grading-and-multi-level-threshold-alerts)
 - [Step 13: WSL 2 Custom Kernel Environment Setup and Verification](#step-13-wsl-2-custom-kernel-environment-setup-and-verification)
+- [Step 14: Dual-Bus Security Gateway Architecture & Fail-Safe Brake Actuator Receiver (Week 4)](#step-14-dual-bus-security-gateway-architecture--fail-safe-brake-actuator-receiver-week-4)
+  - [Step 14.1: Dynamic Multi-Interface CAN Binding (--interface / -i)](#step-141-dynamic-multi-interface-can-binding---interface---i)
+  - [Step 14.2: Fail-Safe Brake Actuator Receiver with 100 ms Safe-State Timeout (ISO 26262 ASIL-D)](#step-142-fail-safe-brake-actuator-receiver-with-100-ms-safe-state-timeout-iso-26262-asil-d)
+  - [Step 14.3: Unified Build Automation & Multi-Target Makefile Integration](#step-143-unified-build-automation--multi-target-makefile-integration)
+  - [Step 14.4: Live Dual-Node Verification & Fail-Safe Execution Results](#step-144-live-dual-node-verification--fail-safe-execution-results)
 - [Known Limitations](#known-limitations)
 - [Expected Outcome](#expected-outcome)
 - [Next Steps](#next-steps)
@@ -3409,6 +3414,156 @@ Because WSL 2 automatically bridges localhost ports to the Windows host, the das
 
 ---
 
+## Step 14: Dual-Bus Security Gateway Architecture & Fail-Safe Brake Actuator Receiver (Week 4)
+
+> **Environment:** Kali Linux VM & Windows 11 WSL 2 (SocketCAN Kernel)  
+> **Milestone:** Active Intrusion Prevention System (IDPS) & ISO 26262 ASIL-D Safe-State Integration
+
+Following the team's Week 4 architectural expansion (`docs/gateway_design.md`), CAN-Sentinel advances from a passive Intrusion Detection System (IDS) to an active **Intrusion Detection & Prevention System (IDPS)**. In standard vehicle architectures, physical actuators (such as brakes and steering) do not share an unsegmented bus with external interfaces (telematics and infotainment). 
+
+To model this, the virtual network is partitioned into dual virtual buses interconnected by a Central Security Gateway:
+
+```mermaid
+flowchart LR
+    subgraph DirtyBus ["vcan0: Vehicle / External Bus (Untrusted)"]
+        SIM["ECU Simulator<br/>(ecu_simulator -i vcan0)"]
+        ATK["Attacker Script<br/>(DoS / Replay / Fuzzing)"]
+        SNIFF["Sniffer & ML Detector<br/>(live_detector.py)"]
+    end
+
+    subgraph GW ["Security Gateway (can_gateway.py)"]
+        direction TB
+        RULE1["1. Allowlist Filter (Drop Unknown IDs)"]
+        RULE2["2. Counter Mode Filter (Drop Out-of-Sequence Spoofing)"]
+        RULE3["3. Emergency Drop Mode (Quarantine Compromised IDs)"]
+    end
+
+    subgraph CleanBus ["vcan1: Safety Domain (Protected)"]
+        ACT["Brake Actuator Receiver<br/>(brake_receiver -i vcan1)"]
+    end
+
+    DirtyBus --> GW
+    SNIFF -- "Quarantine Commands<br/>via Unix Domain Socket" --> GW
+    GW -- "Only verified frames pass" --> CleanBus
+```
+
+---
+
+### Step 14.1: Dynamic Multi-Interface CAN Binding (`--interface` / `-i`)
+
+Previously, `ecu_simulator.c` bound strictly to `"vcan0"`. To enable flexible testing across both the untrusted vehicle bus (`vcan0`) and the isolated safety domain (`vcan1`), the simulator was upgraded with dynamic interface selection:
+
+1. **Configurable Interface Storage:**
+   ```c
+   static char can_interface[IFNAMSIZ] = "vcan0";
+   ```
+2. **Command-Line Interface Flags:**
+   Added `-i <name>` and `--interface <name>` to `main()` argument parsing:
+   ```c
+   } else if (strcmp(argv[i], "--interface") == 0 || strcmp(argv[i], "-i") == 0) {
+       if (i + 1 >= argc) {
+           fprintf(stderr, "Error: --interface requires a network interface argument (e.g. vcan0, vcan1)\n");
+           return EXIT_FAILURE;
+       }
+       i++;
+       strncpy(can_interface, argv[i], sizeof(can_interface) - 1);
+       can_interface[sizeof(can_interface) - 1] = '\0';
+   }
+   ```
+3. **Dynamic Instrument Cluster Header Display:**
+   The ANSI digital instrument cluster automatically reads `s->ifname` and recalibrates border padding so the header dynamically reflects the bound interface:
+   ```text
+   ╭────────────────────────────────────────────────────────────────────────────────────────╮
+   │  Interface: vcan1  │  Kernel: SocketCAN  │  Workers: 7 pthreads (C11 Lock-Free)        │
+   ╰────────────────────────────────────────────────────────────────────────────────────────╯
+   ```
+4. **Independent Hardware Sockets:** Both single-threaded and multi-threaded autonomous ECU worker threads bind their dedicated `PF_CAN` sockets directly to the specified `can_interface`.
+
+---
+
+### Step 14.2: Fail-Safe Brake Actuator Receiver with 100 ms Safe-State Timeout (ISO 26262 ASIL-D)
+
+Under ISO 26262 functional safety, an automotive Electronic Braking System cannot simply hang or maintain stale actuator outputs when network frames are cut off (for instance, when the security gateway triggers **Drop Mode** to block an active masquerade attack).
+
+A dedicated C receiver program, [`ecu_sim/brake_receiver.c`](../../ecu_sim/brake_receiver.c), was implemented with the following specifications:
+
+1. **Kernel-Level SocketCAN Filtering:**
+   Binds to `vcan1` and applies `CAN_RAW_FILTER` exclusively for CAN ID `0x0A0` (`Brake Controller`):
+   ```c
+   struct can_filter rfilter;
+   rfilter.can_id = BRAKE_CAN_ID;
+   rfilter.can_mask = CAN_SFF_MASK;
+   setsockopt(sock, SOL_CAN_RAW, CAN_RAW_FILTER, &rfilter, sizeof(rfilter));
+   ```
+2. **100 ms Loss-of-Signal Heartbeat Monitor:**
+   - Brake frames arrive periodically every $20\text{ ms}$ ($50\text{ Hz}$).
+   - Uses `poll()` with $10\text{ ms}$ resolution to track monotonic inter-arrival delta ($\Delta t$).
+   - If no valid frame arrives for **$> 100\text{ ms}$** (5 consecutive missing frames):
+     - Transitions state: `STATE_OPERATIONAL` $\rightarrow$ `STATE_SAFE_STATE`.
+     - Engages fail-safe mechanical brake default.
+     - Emits prominent high-contrast ANSI alert banner:
+       ```text
+       ACTUATOR STATE : [ 🚨 SAFE STATE ACTIVATED: FAIL-SAFE DEFAULT ENGAGED ]
+       HEALTH STATUS  : ⚠️ LOSS OF SIGNAL (112 ms > 100 ms)! Gateway Block Active!
+       ```
+3. **Automatic Resynchronization:** When valid `0x0A0` frames resume (e.g. gateway quarantine expires or is released by the analyst), the receiver automatically verifies the Byte 7 rolling counter and transitions back to `STATE_OPERATIONAL`.
+
+---
+
+### Step 14.3: Unified Build Automation & Multi-Target Makefile Integration
+
+The unified build automation in [`ecu_sim/Makefile`](../../ecu_sim/Makefile) was updated to compile `brake_receiver` alongside `ecu_simulator` and `test_payloads`:
+
+```makefile
+TARGETS := ecu_simulator test_payloads brake_receiver
+
+all: $(TARGETS)
+
+brake_receiver: brake_receiver.c
+	$(CC) $(CFLAGS) -o $@ $<
+```
+
+#### Execution Commands:
+```bash
+# 1. Compile all binaries
+make clean && make
+
+# 2. Run automated payload unit tests (7/7 pass)
+make test
+
+# 3. Terminal 1: Launch Brake Actuator Receiver on vcan1 (or vcan0)
+./brake_receiver -i vcan1
+
+# 4. Terminal 2: Launch ECU Simulator targeting vcan1
+./ecu_simulator -i vcan1 --threads
+```
+
+---
+
+### Step 14.4: Live Dual-Node Verification & Fail-Safe Execution Results
+
+The dual-bus architecture and fail-safe actuator behavior were validated in a live split-pane terminal session in WSL 2 / Kali Linux.
+
+#### 1. Live Normal Operation (`STATE_OPERATIONAL`)
+With the simulator streaming baseline traffic at 320 frames/s, the brake receiver binds to the bus and filters exclusively for `0x0A0`:
+
+![Brake Receiver Live Operation](screenshots/52-brake-receiver-live-operation.png)
+
+**Screenshot 52:** Split-pane terminal in WSL 2 / Kali Linux demonstrating dual-node SocketCAN communication: `./ecu_simulator -i vcan0 --threads` transmitting on the left pane and `./brake_receiver -i vcan0` on the right pane in `STATE_OPERATIONAL` (green status badge). The receiver dynamically decodes live 0x0A0 brake pressure (48%), pedal switch status, Byte 7 rolling counter progression (132), and steady heartbeat timing (50.3 ms / 50% timeout).
+
+---
+
+#### 2. Loss-of-Signal Safe-State Trigger (`STATE_SAFE_STATE`)
+When simulated transmission is abruptly terminated (modeling gateway drop mode or complete bus cutoff during a masquerade attack), the receiver detects the loss of heartbeat within 100 ms:
+
+![Brake Receiver Safe State Activated](screenshots/53-brake-receiver-safe-state.png)
+
+**Screenshot 53:** Brake actuator receiver (`brake_receiver`) transitioning into ISO 26262 ASIL-D `STATE_SAFE_STATE` (high-contrast red alert banner `[🚨 SAFE STATE ACTIVATED: FAIL-SAFE DEFAULT ENGAGED]`) after simulator transmission is stopped. The receiver flags a loss-of-signal warning as the elapsed dead-time breaches the 100 ms safety threshold, engaging fail-safe mechanical defaults to protect the vehicle.
+
+**Result:** Step 14 completes Member 1's integration with the team's active security gateway. The simulator supports dynamic bus partitioning (`vcan0` / `vcan1`), while the brake receiver provides verified ISO 26262 ASIL-D safe-state fail-safe behavior for live demonstration during the final evaluation review.
+
+---
+
 ## Known Limitations
 
 - Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
@@ -3430,106 +3585,7 @@ Each ECU transmits eight-byte frames with its agreed identifier, a bounded and c
 
 ## Next Steps
 
-1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
+1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary (`-d 600` across seeds 42, 100, 999).
 2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, simultaneous rolling telemetry logging, and dynamic color grading with threshold alerts in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, and 12.9) complete.
 3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.
-
-## Known Limitations
-
-- Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
-- Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter. In one 10-second capture (8.11) individual intervals reached 35–46 ms for the 10 ms and 20 ms ECUs, even though the averages matched the nominal periods. Timing features computed from this traffic (inter-arrival time) will therefore include occasional outliers.
-- Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
-- Signal values are bounded random walks, not a physical vehicle model. Step 10 improves this by deriving RPM from speed and holding the brake switch for 2–6 s, but the signals are still simulated.
-- Signals are updated every 50 ms, so the faster ECUs (10 ms and 20 ms) repeat the latest value in several consecutive frames (10.10, 10.12). Features that depend on frame-to-frame changes see steps rather than a smooth signal.
-- The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
-
----
-
-## Expected Outcome
-
-The implementation provides a stable virtual automotive CAN environment in which six simulated ECUs communicate through `vcan0` and continuously generate legitimate baseline traffic:
-
-**Brake → Steering → Engine RPM → Vehicle Speed → Engine Temperature → Infotainment**
-
-Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined rate of 320 frames per second (measured average ≈ 320.03 frames/s, Step 8). After Step 10 the signals behave more like a vehicle: the brake switch holds for 2–6 s, brake pressure follows it, and engine RPM follows vehicle speed. A random seed can repeat a run. This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
-
-## Next Steps
-
-1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
-2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, simultaneous rolling telemetry logging, and dynamic color grading with threshold alerts in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, and 12.9) complete.
-3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.
-
-## Known Limitations
-
-- Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
-- Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter. In one 10-second capture (8.11) individual intervals reached 35–46 ms for the 10 ms and 20 ms ECUs, even though the averages matched the nominal periods. Timing features computed from this traffic (inter-arrival time) will therefore include occasional outliers.
-- Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
-- Signal values are bounded random walks, not a physical vehicle model. Step 10 improves this by deriving RPM from speed and holding the brake switch for 2–6 s, but the signals are still simulated.
-- Signals are updated every 50 ms, so the faster ECUs (10 ms and 20 ms) repeat the latest value in several consecutive frames (10.10, 10.12). Features that depend on frame-to-frame changes see steps rather than a smooth signal.
-- The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
-
----
-
-## Expected Outcome
-
-The implementation provides a stable virtual automotive CAN environment in which six simulated ECUs communicate through `vcan0` and continuously generate legitimate baseline traffic:
-
-**Brake → Steering → Engine RPM → Vehicle Speed → Engine Temperature → Infotainment**
-
-Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined rate of 320 frames per second (measured average ≈ 320.03 frames/s, Step 8). After Step 10 the signals behave more like a vehicle: the brake switch holds for 2–6 s, brake pressure follows it, and engine RPM follows vehicle speed. A random seed can repeat a run. This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
-
-## Next Steps
-
-1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
-2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, simultaneous rolling telemetry logging, and dynamic color grading with threshold alerts in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, and 12.9) complete.
-3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.
-
-## Known Limitations
-
-- Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
-- Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter. In one 10-second capture (8.11) individual intervals reached 35–46 ms for the 10 ms and 20 ms ECUs, even though the averages matched the nominal periods. Timing features computed from this traffic (inter-arrival time) will therefore include occasional outliers.
-- Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
-- Signal values are bounded random walks, not a physical vehicle model. Step 10 improves this by deriving RPM from speed and holding the brake switch for 2–6 s, but the signals are still simulated.
-- Signals are updated every 50 ms, so the faster ECUs (10 ms and 20 ms) repeat the latest value in several consecutive frames (10.10, 10.12). Features that depend on frame-to-frame changes see steps rather than a smooth signal.
-- The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
-
----
-
-## Expected Outcome
-
-The implementation provides a stable virtual automotive CAN environment in which six simulated ECUs communicate through `vcan0` and continuously generate legitimate baseline traffic:
-
-**Brake → Steering → Engine RPM → Vehicle Speed → Engine Temperature → Infotainment**
-
-Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined rate of 320 frames per second (measured average ≈ 320.03 frames/s, Step 8). After Step 10 the signals behave more like a vehicle: the brake switch holds for 2–6 s, brake pressure follows it, and engine RPM follows vehicle speed. A random seed can repeat a run. This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
-
-## Next Steps
-
-1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
-2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, simultaneous rolling telemetry logging, and dynamic color grading with threshold alerts in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, and 12.9) complete.
-3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.
-
-## Known Limitations
-
-- Traffic runs on a virtual bus (`vcan0`); there is no physical CAN hardware, bit timing, or arbitration delay.
-- Timing depends on Linux scheduling inside the VirtualBox VM; heavy host load can add jitter. In one 10-second capture (8.11) individual intervals reached 35–46 ms for the 10 ms and 20 ms ECUs, even though the averages matched the nominal periods. Timing features computed from this traffic (inter-arrival time) will therefore include occasional outliers.
-- Because jitter is added to every interval, absolute transmission times wander slowly relative to the start time, although each interval stays within the period ±1 ms.
-- Signal values are bounded random walks, not a physical vehicle model. Step 10 improves this by deriving RPM from speed and holding the brake switch for 2–6 s, but the signals are still simulated.
-- Signals are updated every 50 ms, so the faster ECUs (10 ms and 20 ms) repeat the latest value in several consecutive frames (10.10, 10.12). Features that depend on frame-to-frame changes see steps rather than a smooth signal.
-- The identifiers are simulation-specific and do not represent a production vehicle's CAN database.
-
----
-
-## Expected Outcome
-
-The implementation provides a stable virtual automotive CAN environment in which six simulated ECUs communicate through `vcan0` and continuously generate legitimate baseline traffic:
-
-**Brake → Steering → Engine RPM → Vehicle Speed → Engine Temperature → Infotainment**
-
-Each ECU transmits eight-byte frames with its agreed identifier, a bounded and changing signal value, and an independent rolling counter, at a combined rate of 320 frames per second (measured average ≈ 320.03 frames/s, Step 8). After Step 10 the signals behave more like a vehicle: the brake switch holds for 2–6 s, brake pressure follows it, and engine RPM follows vehicle speed. A random seed can repeat a run. This normal CAN traffic serves as the baseline communication required by the overall **CAN-Sentinel Automotive ECU Intrusion Detection System**.
-
-## Next Steps
-
-1. Await Member 3's final 10-minute baseline dataset CSV commit (Step 11) using the verified Step 10/12 simulator binary.
-2. Automated payload tests, unified Makefile, live telemetry, DBC database, multi-threaded architecture, ANSI digital cluster, real-time Web EV sport dashboard, dynamic PRND transmission gear indicator, simultaneous rolling telemetry logging, and dynamic color grading with threshold alerts in Week 3 (Steps 12, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, and 12.9) complete.
-3. Windows 11 WSL 2 custom kernel SocketCAN environment setup, native vcan0 activation, unit test suite pass, 320 fps transmission, and host browser dashboard streaming in Step 13 complete.
+4. Dual-bus Virtual Security Gateway integration (`vcan0` / `vcan1`), dynamic interface CLI flags (`--interface / -i`), dedicated fail-safe brake actuator receiver (`brake_receiver.c`), 100 ms loss-of-signal heartbeat monitor, and ISO 26262 safe-state fallback in Step 14 complete.
