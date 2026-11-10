@@ -222,3 +222,12 @@ __marimo__/
 # Local CAN-Sentinel test logs
 logs/
 gateway_events.jsonl
+
+# Keep validated Chetan virtual CAN capture datasets
+
+# Track only validated root-level virtual CAN captures
+!/logs/
+/logs/*
+!/logs/official_capture/
+/logs/official_capture/*
+!/logs/official_capture/*.csv
