@@ -1168,6 +1168,7 @@
       currentSteer: 0,
       currentBrakePress: 0,
       currentCoolant: 0,
+      brakeTimeout: false,
 
       // Bus metrics
       totalFrames: 0,
@@ -1352,7 +1353,7 @@
         ws.onopen = () => {
           state.isOnline = true;
           badge.classList.remove("error");
-          badgeText.textContent = "SOCKETCAN vcan0: CONNECTED (60 FPS)";
+          badgeText.textContent = "CAN BUS: CONNECTED (60 FPS)";
           document.getElementById("bus-health-badge").textContent = "● OPTIMAL";
           document.getElementById("bus-health-badge").style.color = "var(--neon-green)";
           document.querySelectorAll(".node-status-led").forEach(led => led.classList.remove("off"));
@@ -1372,7 +1373,8 @@
 
               state.isOnline = true;
               badge.classList.remove("error");
-              badgeText.textContent = "SOCKETCAN vcan0: CONNECTED (60 FPS)";
+              const ifaceDesc = data.bus_stats?.mode || "SOCKETCAN";
+              badgeText.textContent = `${ifaceDesc}: CONNECTED (60 FPS)`;
               document.getElementById("bus-health-badge").textContent = "● OPTIMAL";
               document.getElementById("bus-health-badge").style.color = "var(--neon-green)";
               document.querySelectorAll(".node-status-led").forEach(led => led.classList.remove("off"));
@@ -1401,6 +1403,12 @@
                 updateECUCard("0x200", data.ecus["0x200"]);
                 updateECUCard("0x300", data.ecus["0x300"]);
                 updateECUCard("0x600", data.ecus["0x600"]);
+
+                if (data.ecus["0x0A0"]) {
+                  state.brakeTimeout = (data.ecus["0x0A0"].health === "TIMEOUT");
+                } else {
+                  state.brakeTimeout = false;
+                }
               }
             }
           } catch (err) {}
@@ -1420,6 +1428,7 @@
     /* Drop all signals, dials, and sound to zero when offline/not working */
     function handleDisconnect() {
       state.isOnline = false;
+      state.brakeTimeout = false;
       const badge = document.getElementById("conn-badge");
       const badgeText = document.getElementById("conn-text");
       badge.classList.add("error");
@@ -1584,10 +1593,17 @@
       document.getElementById("steer-arr-r").className = (steerAngleClamped > 1.5) ? "steer-right-active" : "";
 
       // 4. REAR BRAKES (0x0A0)
-      const isBraking = (state.targetBrakeSwitch === 1 || state.currentBrakePress > 1);
+      const isBrakeSafeState = state.brakeTimeout;
+      const isBraking = isBrakeSafeState || (state.targetBrakeSwitch === 1 || state.currentBrakePress > 1);
       document.getElementById("center-car-card").classList.toggle("brake-engaged", isBraking);
-      document.getElementById("brake-status-text").textContent = isBraking ? `ENGAGED (${Math.round(state.currentBrakePress)}%)` : "RELEASED (0%)";
-      document.getElementById("brake-meter-fill").style.width = `${Math.max(0, Math.min(100, state.currentBrakePress))}%`;
+      if (isBrakeSafeState) {
+        document.getElementById("brake-status-text").textContent = "🚨 SAFE STATE (>100ms)";
+        document.getElementById("brake-status-text").style.color = "var(--neon-red)";
+      } else {
+        document.getElementById("brake-status-text").textContent = isBraking ? `ENGAGED (${Math.round(state.currentBrakePress)}%)` : "RELEASED (0%)";
+        document.getElementById("brake-status-text").style.color = "";
+      }
+      document.getElementById("brake-meter-fill").style.width = isBrakeSafeState ? "100%" : `${Math.max(0, Math.min(100, state.currentBrakePress))}%`;
 
       // 5. TRANSMISSION
       const gearLetter = state.gear.startsWith("D") ? "D" : state.gear;

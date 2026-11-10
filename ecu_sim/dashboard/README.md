@@ -77,7 +77,8 @@ The bridge and dashboard decode all 6 periodic ECUs broadcast at 320 frames/sec:
 3. Start the Web Dashboard Bridge (in Terminal 2):
    ```bash
    cd ~/CAN-Sentinel/ecu-simulator
-   make dashboard
+   make dashboard              # Default: binds to vcan0
+   make dashboard IFACE=vcan1  # Optional: bind directly to vcan1 safety domain
    ```
    *(Or alternatively, directly from inside `dashboard/`: `python3 bridge.py --interface vcan0 --port 8080`)*
 
