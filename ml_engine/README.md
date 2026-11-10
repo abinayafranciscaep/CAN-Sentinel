@@ -28,7 +28,8 @@ line per detection for the dashboard.
 
 Alerts for the same attack and ID are not repeated within 2 seconds; flood and fuzz
 alerts are grouped for the whole bus. See `docs/threat_detection_coverage.md` for how
-each rule maps to the threat register.
+each rule maps to the threat register, and `docs/gateway_design.md` for the planned
+next step: blocking confirmed attacks at a security gateway.
 
 ## Files
 
@@ -114,6 +115,7 @@ Alert output (Section 5.3), one JSON object per line:
 |---|---|
 | Rules R1-R9, statistics layer, Isolation Forest | Done; tested on simulated data |
 | Incident summary | Done |
+| Security gateway (detect -> block) | Designed: `docs/gateway_design.md` (message format, blocking policy); gateway logic tested offline on simulated data, not yet live |
 | Live detector on the sniffer socket | Done; live test with the sniffer pending |
 | Evaluation and retraining tools | Done; waiting for the official recordings |
 | Results on real team recordings | Pending: official normal runs and labelled attack runs |

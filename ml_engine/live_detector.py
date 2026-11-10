@@ -13,6 +13,10 @@ Usage (from the repository root):
     python ml_engine/live_detector.py                       # live, from the sniffer socket
     python ml_engine/live_detector.py --replay data/flood_run1_1013.csv
 
+With --gateway, confirmed attacks are also sent to the security gateway, which
+quarantines the CAN ID (docs/gateway_design.md):
+    python ml_engine/live_detector.py --alerts alerts.jsonl --gateway
+
 In live mode the detector waits for the sniffer if it is not running yet,
 reconnects if the sniffer restarts, and skips malformed lines instead of
 stopping.
@@ -31,6 +35,7 @@ import pandas as pd
 from alerts import to_json_line
 from detect import Detector
 from features import normalise_id, payload_entropy
+from gateway_client import GATEWAY_SOCKET, GatewayClient, decide_action
 from train_model import MODEL_PATH
 
 SOCKET_PATH = "/tmp/can_sentinel.sock"
@@ -137,7 +142,9 @@ def to_frame_table(window):
     return df
 
 
-def run(source, window_len=1.0, step=0.5, model_path=MODEL_PATH, alert_file=ALERT_FILE):
+def run(source, window_len=1.0, step=0.5, model_path=MODEL_PATH, alert_file=ALERT_FILE,
+        gateway=None):
+    """Detect on a stream of frames; with a GatewayClient, also block confirmed attacks."""
     detector = Detector(model_path, window_len)
     window = deque()
     next_check = None
@@ -157,6 +164,13 @@ def run(source, window_len=1.0, step=0.5, model_path=MODEL_PATH, alert_file=ALER
                     out.write(line + "\n")
                     out.flush()
                     total += 1
+                    command = decide_action(alert) if gateway else None
+                    if command:
+                        reply = gateway.send(command)
+                        if reply and reply.get("ok") and not reply.get("renewed"):
+                            print(f"GATEWAY: quarantined {command['can_id']} "
+                                  f"({command['mode']} mode, {command['duration_s']:.0f} s)",
+                                  flush=True)
                 next_check = now + step
     print(f"Stream ended; {total} alerts written to {alert_file}")
 
@@ -170,12 +184,16 @@ def main():
     p.add_argument("--alerts", default=ALERT_FILE)
     p.add_argument("--retries", type=int, default=30, help="connection attempts before giving up")
     p.add_argument("--no-reconnect", action="store_true", help="stop when the sniffer stops")
+    p.add_argument("--gateway", action="store_true",
+                   help="send quarantine commands to the security gateway (detect -> block)")
+    p.add_argument("--gateway-socket", default=GATEWAY_SOCKET)
     a = p.parse_args()
     if a.replay:
         source = frames_from_csv(a.replay, a.realtime)
     else:
         source = frames_from_socket(a.socket, a.retries, reconnect=not a.no_reconnect)
-    run(source, model_path=a.model, alert_file=a.alerts)
+    gateway = GatewayClient(a.gateway_socket) if a.gateway else None
+    run(source, model_path=a.model, alert_file=a.alerts, gateway=gateway)
 
 
 if __name__ == "__main__":
