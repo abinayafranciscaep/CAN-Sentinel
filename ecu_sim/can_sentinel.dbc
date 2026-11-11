@@ -1,0 +1,110 @@
+VERSION ""
+
+NS_ :
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: Dashboard Brake_ECU Steering_ECU Engine_ECU Speed_ECU Temp_ECU Infotainment_ECU
+
+BO_ 160 Brake_Message: 8 Brake_ECU
+ SG_ Brake_Pressure : 7|8@0+ (1,0) [0|100] "%" Dashboard
+ SG_ Brake_Switch : 15|8@0+ (1,0) [0|1] "" Dashboard
+ SG_ Brake_Rolling_Counter : 63|8@0+ (1,0) [0|255] "" Dashboard
+
+BO_ 176 Steering_Message: 8 Steering_ECU
+ SG_ Steering_Angle : 7|16@0- (0.1,0) [-45|45] "deg" Dashboard
+ SG_ Steering_Rolling_Counter : 63|8@0+ (1,0) [0|255] "" Dashboard
+
+BO_ 256 Engine_Message: 8 Engine_ECU
+ SG_ Engine_RPM : 7|16@0+ (1,0) [800|4000] "RPM" Dashboard
+ SG_ Engine_Rolling_Counter : 63|8@0+ (1,0) [0|255] "" Dashboard
+
+BO_ 512 Speed_Message: 8 Speed_ECU
+ SG_ Vehicle_Speed : 7|8@0+ (1,0) [0|130] "km/h" Dashboard
+ SG_ Speed_Rolling_Counter : 63|8@0+ (1,0) [0|255] "" Dashboard
+
+BO_ 768 Temperature_Message: 8 Temp_ECU
+ SG_ Engine_Temperature : 7|8@0+ (1,-40) [80|105] "degC" Dashboard
+ SG_ Temp_Rolling_Counter : 63|8@0+ (1,0) [0|255] "" Dashboard
+
+BO_ 1536 Infotainment_Message: 8 Infotainment_ECU
+ SG_ Infotainment_Status : 7|8@0+ (1,0) [0|1] "" Dashboard
+ SG_ Info_Rolling_Counter : 63|8@0+ (1,0) [0|255] "" Dashboard
+
+CM_ "CAN-Sentinel Automotive ECU Network Database Specification (Member 1)";
+CM_ BU_ Dashboard "Vehicle instrument cluster and CAN-Sentinel intrusion detection monitoring node";
+CM_ BU_ Brake_ECU "Brake System Electronic Control Unit (Priority 1: 0x0A0)";
+CM_ BU_ Steering_ECU "Electronic Power Steering Control Module (Priority 2: 0x0B0)";
+CM_ BU_ Engine_ECU "Internal Combustion Engine Control Module (ECM: 0x100)";
+CM_ BU_ Speed_ECU "Vehicle Speed Sensor & Transmission Controller (0x200)";
+CM_ BU_ Temp_ECU "Engine Thermal & Cooling Management Controller (0x300)";
+CM_ BU_ Infotainment_ECU "In-Vehicle Telematics & Infotainment System (0x600)";
+
+CM_ BO_ 160 "Periodic brake system message (20 ms nominal period, highest bus arbitration priority)";
+CM_ SG_ 160 Brake_Pressure "Hydraulic brake line pressure percentage (0 = released, 100 = full braking)";
+CM_ SG_ 160 Brake_Switch "Physical brake pedal contact switch state";
+CM_ SG_ 160 Brake_Rolling_Counter "Sequential rolling counter (0-255 wrap) for replay attack detection";
+
+CM_ BO_ 176 "Periodic steering angle message (10 ms nominal period, second bus arbitration priority)";
+CM_ SG_ 176 Steering_Angle "Steering wheel angle in 0.1 degree units (signed 16-bit big-endian, negative=left, positive=right)";
+CM_ SG_ 176 Steering_Rolling_Counter "Sequential rolling counter (0-255 wrap) for replay attack detection";
+
+CM_ BO_ 256 "Periodic engine tachometer message (10 ms nominal period)";
+CM_ SG_ 256 Engine_RPM "Engine revolutions per minute (unsigned 16-bit big-endian, coupled to vehicle speed)";
+CM_ SG_ 256 Engine_Rolling_Counter "Sequential rolling counter (0-255 wrap) for replay attack detection";
+
+CM_ BO_ 512 "Periodic vehicle speedometer message (20 ms nominal period)";
+CM_ SG_ 512 Vehicle_Speed "Road speed in kilometers per hour";
+CM_ SG_ 512 Speed_Rolling_Counter "Sequential rolling counter (0-255 wrap) for replay attack detection";
+
+CM_ BO_ 768 "Periodic thermal management message (100 ms nominal period)";
+CM_ SG_ 768 Engine_Temperature "Engine coolant temperature in degrees Celsius (encoded with +40 offset in raw payload)";
+CM_ SG_ 768 Temp_Rolling_Counter "Sequential rolling counter (0-255 wrap) for replay attack detection";
+
+CM_ BO_ 1536 "Periodic infotainment heartbeat message (100 ms nominal period)";
+CM_ SG_ 1536 Infotainment_Status "Infotainment telematics alive status";
+CM_ SG_ 1536 Info_Rolling_Counter "Sequential rolling counter (0-255 wrap) for replay attack detection";
+
+BA_DEF_ BO_ "GenMsgCycleTime" INT 0 65535;
+BA_DEF_ "BusType" STRING ;
+
+BA_DEF_DEF_ "GenMsgCycleTime" 0;
+BA_DEF_DEF_ "BusType" "CAN";
+
+BA_ "GenMsgCycleTime" BO_ 160 20;
+BA_ "GenMsgCycleTime" BO_ 176 10;
+BA_ "GenMsgCycleTime" BO_ 256 10;
+BA_ "GenMsgCycleTime" BO_ 512 20;
+BA_ "GenMsgCycleTime" BO_ 768 100;
+BA_ "GenMsgCycleTime" BO_ 1536 100;
+
+VAL_ 160 Brake_Switch 1 "PRESSED" 0 "RELEASED" ;
+VAL_ 1536 Infotainment_Status 1 "ACTIVE" 0 "INACTIVE" ;

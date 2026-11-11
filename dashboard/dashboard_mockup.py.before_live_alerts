@@ -1,0 +1,2577 @@
+"""
+dashboard_mockup.py - styled, resizable, interactive CAN-Sentinel dashboard.
+
+Data sources (all optional; the dashboard falls back to sample data):
+    dashboard/sample_alerts.jsonl -> alert card, threat gauge, alert count
+    data/normal_run*_*.csv        -> traffic table, graph and frames/second
+                                     (newest file by modification time)
+
+Nothing is read from the live CAN bus. When files load, the banner says
+"REPLAYING RECORDED FILE" so the dashboard never implies live detection.
+
+Run from the repository root:
+    py dashboard/dashboard_mockup.py
+
+Car image:
+    dashboard/assets/can_sentinel_car.png
+
+Interactions
+    Click a top card or the alert banner ... jump to CAN Traffic / Alerts
+    Click a bar in "Traffic share by CAN ID" ... filter CAN Traffic by that ID
+    Hover the graph ... per-second values; 30 s / 60 s / All range buttons
+    "Hide table" ... minimise the recent-traffic table, graph takes the space
+    CAN Traffic: search + status filter, pause refresh, row decoder, CSV export
+    Alerts: mark as reviewed, copy details
+    Shortcuts: Ctrl+1/2/3/4 tabs, Ctrl+F search, F5 refresh, Ctrl +/-/0 zoom
+"""
+import Dataset_summary
+from openpyxl.styles import styleable
+import csv
+import datetime
+import html
+import json
+import sys
+import socket
+import time
+import math
+from collections import Counter, deque
+from pathlib import Path
+from PyQt6.QtCore import Qt, QSize, QRectF, QTimer, QThread, pyqtSignal
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QImage,
+    QKeySequence,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QShortcut,
+    QTransform,
+)
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QButtonGroup,
+    QComboBox,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSlider,
+    QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+DASHBOARD_DIR = Path(__file__).resolve().parent
+DATA_DIR = DASHBOARD_DIR.parent / "data"
+ALERT_FILE = DASHBOARD_DIR / "sample_alerts.jsonl"
+# Prefer the gateway worktree's live log; fall back to a log copied into this repo.
+REPO_DIR = DASHBOARD_DIR.parent
+GATEWAY_EVENT_CANDIDATES = (
+    REPO_DIR.parent / "CAN-Sentinel-member2" / "gateway_events.jsonl",
+    REPO_DIR / "gateway_events.jsonl",
+)
+GATEWAY_EVENT_FILE = next(
+    (path for path in GATEWAY_EVENT_CANDIDATES if path.is_file()),
+    GATEWAY_EVENT_CANDIDATES[0],
+)
+
+IMAGE_CANDIDATES = [
+    DASHBOARD_DIR / "assets" / "can_sentinel_car.png",
+    DASHBOARD_DIR / "assests" / "can_sentinel_car.png",
+    DASHBOARD_DIR / "can_sentinel_car.png",
+]
+
+CAR_IMAGE_PATH = next(
+    (path for path in IMAGE_CANDIDATES if path.is_file()),
+    IMAGE_CANDIDATES[0],
+)
+
+# ---------------------------------------------------------------------------
+# Fallback sample data (used only when the real files are missing/malformed)
+# ---------------------------------------------------------------------------
+
+SAMPLE_THREAT = 25
+SAMPLE_FPS = "308"  # about the rate seen in the Oct 16 ecu_simulator recordings
+SAMPLE_ROWS = [
+    ("1791300000.123456", "0x0A0", "8", "3201000000000017", "OK"),
+    ("1791300000.133502", "0x0B0", "8", "00FA000000000042", "OK"),
+    ("1791300000.143611", "0x100", "8", "0BB5000000000009", "OK"),
+    ("1791300042.501223", "0x0A0", "8", "6400000000000099", "ALERT"),
+    ("1791300042.511400", "0x200", "8", "3C00000000000012", "OK"),
+]
+
+REQUIRED_ALERT_FIELDS = {
+    "timestamp", "attack_type", "suspect_id", "confidence",
+    "severity", "affected_system", "detection_layer", "technique",
+}
+REQUIRED_CSV_FIELDS = {"timestamp", "can_id", "dlc", "data_hex", "label"}
+# CAN ID -> readable system name (project baseline)
+ECU_NAMES = {
+    0x0A0: "brake",
+    0x0B0: "steering",
+    0x100: "engine RPM",
+    0x200: "vehicle speed",
+    0x300: "engine temp",
+    0x600: "infotainment",
+    0x7DF: "diagnostics",
+}
+
+
+def ecu_name(can_id):
+    """Return the readable system name for a known CAN ID."""
+    try:
+        return ECU_NAMES.get(int(str(can_id).strip(), 16))
+    except (ValueError, TypeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Loaders
+# ---------------------------------------------------------------------------
+
+
+def load_alert(path):
+    """Load the latest valid alert from either a JSON object or JSONL file."""
+    latest_alert = None
+
+    try:
+        with open(path, encoding="utf-8") as f:
+            content = f.read().strip()
+    except OSError:
+        return None
+
+    if not content:
+        return None
+
+    # Accept a regular JSON object first, then fall back to JSON Lines.
+    try:
+        parsed = json.loads(content)
+        candidates = parsed if isinstance(parsed, list) else [parsed]
+    except json.JSONDecodeError:
+        candidates = []
+        for line in content.splitlines():
+            if not line.strip():
+                continue
+            try:
+                candidates.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    for alert in candidates:
+        if not isinstance(alert, dict):
+            continue
+        if not REQUIRED_ALERT_FIELDS <= alert.keys():
+            continue
+        try:
+            alert = dict(alert)
+            alert["confidence"] = float(alert["confidence"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        latest_alert = alert
+
+    return latest_alert
+
+
+def find_recording(data_dir):
+    """Return the newest non-empty normal_run CSV recording."""
+    try:
+        files = [
+            p for p in data_dir.glob("normal_run*_*.csv")
+            if p.is_file() and p.stat().st_size > 0
+        ]
+
+        files.sort(
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+
+    except OSError:
+        return None
+
+    return files[0] if files else None
+
+
+def load_recording(path, n=5):
+    """
+    Reads a recorded CSV in one pass.
+
+    Returns:
+        (last_n_rows, frames_per_second, filename, clock_steps)
+        or None if the file is invalid.
+
+    FPS is calculated using forward-moving timestamp differences.
+    Backward timestamp jumps are counted in clock_steps.
+    """
+    if path is None:
+        return None
+
+    tail = deque(maxlen=n)
+    count = 0
+    prev = None
+    forward = 0.0
+    clock_steps = 0
+
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+
+            if (
+                not reader.fieldnames
+                or not REQUIRED_CSV_FIELDS.issubset(set(reader.fieldnames))
+            ):
+                return None
+
+            for r in reader:
+                ts = float(r["timestamp"])
+
+                if prev is not None:
+                    delta = ts - prev
+
+                    if delta >= 0:
+                        forward += delta
+                    else:
+                        clock_steps += 1
+
+                prev = ts
+                count += 1
+
+                status = "OK" if r["label"] == "normal" else "ALERT"
+
+                tail.append((
+                    r["timestamp"],
+                    r["can_id"],
+                    r["dlc"],
+                    r["data_hex"],
+                    status
+                ))
+
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+    if count < 2 or forward <= 0:
+        return None
+
+    fps = (count - 1) / forward
+    return list(tail), fps, Path(path).name, clock_steps
+
+
+_SERIES_CACHE = {}
+
+
+def load_fps_series(path):
+    """Frames per second for every second of the recording: (series, average).
+
+    Uses the same forward-timestamp rule as load_recording, and is cached per
+    file version so the 1-second refresh timer stays cheap.
+    """
+    if path is None:
+        return [], 0.0
+    try:
+        st = Path(path).stat()
+    except OSError:
+        return [], 0.0
+    key = (str(path), st.st_mtime, st.st_size)
+    if key in _SERIES_CACHE:
+        return _SERIES_CACHE[key]
+
+    buckets = Counter()
+    prev, elapsed, count = None, 0.0, 0
+    try:
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            if (
+                not reader.fieldnames
+                or not REQUIRED_CSV_FIELDS.issubset(set(reader.fieldnames))
+            ):
+                return [], 0.0
+            for r in reader:
+                ts = float(r["timestamp"])
+                if prev is not None and ts - prev >= 0:
+                    elapsed += ts - prev
+                prev = ts
+                count += 1
+                buckets[int(elapsed)] += 1
+    except (OSError, ValueError, KeyError, TypeError):
+        return [], 0.0
+    if not buckets:
+        return [], 0.0
+
+    series = [buckets.get(k, 0) for k in range(max(buckets) + 1)]
+    if len(series) > 2:
+        series = series[:-1]  # the last second is usually partial
+    avg = (count - 1) / elapsed if elapsed > 0 and count > 1 else 0.0
+    _SERIES_CACHE.clear()
+    _SERIES_CACHE[key] = (series, avg)
+    return series, avg
+
+
+# Load everything once at start-up.
+ALERT = load_alert(ALERT_FILE)
+RECORDING_FILE = find_recording(DATA_DIR)
+RECORDING = load_recording(RECORDING_FILE, n=100)
+
+if RECORDING:
+    ROWS, _fps, RECORDING_NAME, CLOCK_STEPS = RECORDING
+    FRAMES_PER_SECOND = f"{_fps:.0f}"
+else:
+    ROWS, FRAMES_PER_SECOND, RECORDING_NAME, CLOCK_STEPS = SAMPLE_ROWS, SAMPLE_FPS, None, 0
+
+if ALERT:
+    # Placeholder mapping: confidence -> 0-100. Agree the real one with the ML lead.
+    THREAT = max(0, min(100, int(round(ALERT["confidence"] * 100))))
+    ALERT_COUNT = "1"
+else:
+    THREAT = 0 if RECORDING else SAMPLE_THREAT
+    ALERT_COUNT = "0" if RECORDING else "1"
+
+USING_FILES = bool(ALERT) or bool(RECORDING)
+
+# A stand-in alert file is not a detection. Label it so it cannot be mistaken
+# for one. This turns off by itself when the file is renamed to a real alert
+# source (the name no longer starts with "sample").
+IS_SAMPLE_ALERT = bool(ALERT) and ALERT_FILE.name.lower().startswith("sample")
+SAMPLE_TAG = " (sample)" if IS_SAMPLE_ALERT else ""
+
+# ---------------------------------------------------------------------------
+# Style (colours unchanged; a few rules appended at the end for new widgets)
+# ---------------------------------------------------------------------------
+
+STYLE = """
+QMainWindow {
+    background-color: #07111F;
+}
+
+QWidget#root, QWidget#content {
+    background-color: #07111F;
+}
+
+QLabel {
+    color: #DCE8F7;
+    background-color: transparent;
+}
+
+QLabel#heading {
+    font-size: 32px;
+    font-weight: bold;
+    color: #FFFFFF;
+}
+
+QLabel#headingAccent {
+    font-size: 32px;
+    font-weight: bold;
+    color: #20B8FF;
+}
+
+QLabel#sub {
+    color: #9FB4CE;
+    font-size: 13px;
+}
+
+QLabel#muted {
+    color: #94A3B8;
+    font-size: 11px;
+}
+
+QLabel#cardTitle {
+    color: #A9BED7;
+    font-size: 12px;
+}
+
+QLabel#cardValue {
+    font-size: 30px;
+    font-weight: bold;
+}
+
+QFrame#card {
+    background-color: #101F33;
+    border: 1px solid #203B59;
+    border-radius: 12px;
+}
+
+QFrame#alertCard {
+    background-color: #211521;
+    border: 1px solid #8D2736;
+    border-radius: 12px;
+}
+
+QFrame#alertCardEmpty {
+    background-color: #0F2219;
+    border: 1px solid #1F6B45;
+    border-radius: 12px;
+}
+
+QFrame#trafficCard {
+    background-color: #0D1A2B;
+    border: 1px solid #203B59;
+    border-radius: 12px;
+}
+
+QProgressBar {
+    background-color: #20344C;
+    border: none;
+    border-radius: 6px;
+    max-height: 13px;
+    min-height: 13px;
+}
+
+QProgressBar::chunk {
+    border-radius: 6px;
+}
+
+QTableWidget {
+    background-color: #0B1727;
+    alternate-background-color: #122238;
+    color: #DCE8F7;
+    border: 1px solid #203B59;
+    border-radius: 7px;
+    gridline-color: #20344C;
+    selection-background-color: #1B4265;
+    selection-color: white;
+    font-size: 12px;
+}
+
+QHeaderView::section {
+    background-color: #1A304A;
+    color: #E7F0FC;
+    padding: 8px 6px;
+    border: none;
+    border-right: 1px solid #284563;
+    font-weight: bold;
+}
+
+QPushButton {
+    background-color: #172D46;
+    color: #DCE8F7;
+    border: 1px solid #294967;
+    border-radius: 6px;
+    padding: 5px 10px;
+}
+
+QPushButton:hover {
+    background-color: #214263;
+}
+
+QTabWidget::pane {
+    border: 1px solid #203B59;
+    background-color: #07111F;
+}
+QTabBar::tab {
+    background-color: #101F33;
+    color: #A9BED7;
+    padding: 10px 18px;
+    border: 1px solid #203B59;
+}
+QTabBar::tab:hover {
+    background-color: #172D46;
+    color: #FFFFFF;
+}
+QTabBar::tab:selected {
+    background-color: #1A304A;
+    color: #FFFFFF;
+    border-bottom: 3px solid #20B8FF;
+}
+QLineEdit:focus {
+    border: 1px solid #20B8FF;
+}
+QPushButton:pressed {
+    background-color: #0D2238;
+}
+QTableWidget::item {
+    padding: 4px;
+}
+QLineEdit {
+    background-color: #0B1727;
+    color: #DCE8F7;
+    border: 1px solid #294967;
+    border-radius: 6px;
+    padding: 9px;
+}
+QSlider::groove:horizontal {
+    background: #20344C;
+    height: 5px;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    background: #20B8FF;
+    width: 13px;
+    margin: -5px 0;
+    border-radius: 6px;
+}
+
+QScrollArea {
+    background-color: #07111F;
+    border: none;
+}
+
+QPushButton:checked {
+    background-color: #1A304A;
+    border: 1px solid #20B8FF;
+    color: #FFFFFF;
+}
+QFrame#card[clickable="true"]:hover {
+    border: 1px solid #20B8FF;
+    background-color: #132640;
+}
+QComboBox {
+    background-color: #0B1727;
+    color: #DCE8F7;
+    border: 1px solid #294967;
+    border-radius: 6px;
+    padding: 8px 10px;
+    min-width: 110px;
+}
+QComboBox:focus {
+    border: 1px solid #20B8FF;
+}
+QComboBox QAbstractItemView {
+    background-color: #0B1727;
+    color: #DCE8F7;
+    selection-background-color: #1B4265;
+    border: 1px solid #294967;
+}
+QToolTip {
+    background-color: #101F33;
+    color: #DCE8F7;
+    border: 1px solid #20B8FF;
+}
+QPushButton#navTab {
+    background-color: transparent;
+    color: #A9BED7;
+    border: none;
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+    padding: 10px 18px;
+    font-size: 14px;
+}
+QPushButton#navTab:hover {
+    background-color: #172D46;
+    color: #FFFFFF;
+}
+QPushButton#navTab:checked {
+    background-color: #1A304A;
+    color: #FFFFFF;
+    border-bottom: 3px solid #20B8FF;
+}
+"""
+
+
+def threat_level(score):
+    """Map a 0-100 score to a label and a colour."""
+
+    if score < 40:
+        return "LOW", "#35E58B"
+
+    if score < 70:
+        return "MEDIUM", "#FFB547"
+
+    return "HIGH", "#FF4D5E"
+
+
+def severity_color(severity):
+    """Colour for the severity word in the alert banner."""
+    return {
+        "low": "#35E58B",
+        "medium": "#FFB547",
+        "high": "#FF8A4D",
+        "critical": "#FF5A66",
+    }.get(str(severity).lower(), "#FF5A66")
+
+
+class ClickableFrame(QFrame):
+    """A QFrame that emits clicked() on a left click."""
+
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+class DonutChart(QWidget):
+    """Interactive CAN-ID traffic distribution doughnut chart."""
+
+    can_id_clicked = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.data = []
+        self.total = 0
+        self.colors = [
+            QColor("#20B8FF"),
+            QColor("#36D6A0"),
+            QColor("#FFB547"),
+            QColor("#FF718B"),
+            QColor("#A78BFA"),
+            QColor("#F59E0B"),
+            QColor("#55C2E8"),
+            QColor("#9CA3AF"),
+        ]
+        self.setMinimumHeight(220)
+        self.setMinimumWidth(360)
+
+    def set_data(self, data, total):
+        self.data = data
+        self.total = total
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        if not self.data:
+            painter.setPen(QColor("#8EA6C2"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "Waiting for CAN traffic...")
+            return
+
+        size = min(175, self.height() - 25)
+        pie = QRectF(15, (self.height() - size) / 2, size, size)
+
+        start = 0.0
+        for i, (can_id, count) in enumerate(self.data):
+            span = count / max(self.total, 1) * 360
+            painter.setBrush(self.colors[i % len(self.colors)])
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawPie(pie, int(start * 16), int(span * 16))
+            start += span
+
+        # Doughnut center
+        center_size = size * 0.55
+        center = pie.center()
+        painter.setBrush(QColor("#101E30"))
+        painter.drawEllipse(
+            QRectF(center.x() - center_size / 2,
+                   center.y() - center_size / 2,
+                   center_size, center_size)
+        )
+
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawText(
+            QRectF(center.x() - 45, center.y() - 18, 90, 36),
+            Qt.AlignmentFlag.AlignCenter,
+            str(self.total)
+        )
+
+        # Legend
+        x = pie.right() + 20
+        y = 25
+        for i, (can_id, count) in enumerate(self.data):
+            color = self.colors[i % len(self.colors)]
+            painter.setBrush(color)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(QRectF(x, y + 3, 10, 10), 3, 3)
+
+            percentage = count / max(self.total, 1) * 100
+            painter.setPen(QColor("#DCE8F7"))
+            painter.drawText(
+                int(x + 18), int(y + 13),
+                f"{can_id} - {ecu_name(can_id) or 'Unknown ECU'}: {count} ({percentage:.1f}%)"
+            )
+            y += 23
+
+        painter.end()
+
+    def mousePressEvent(self, event):
+        if not self.data:
+            return
+
+        size = min(175, self.height() - 25)
+        center_x = 15 + size / 2
+        center_y = self.height() / 2
+        dx = event.position().x() - center_x
+        dy = center_y - event.position().y()
+
+        distance = (dx * dx + dy * dy) ** 0.5
+        if distance < size * 0.225 or distance > size * 0.5:
+            return
+
+        angle = math.degrees(math.atan2(dy, dx)) % 360
+        cumulative = 0
+
+        for can_id, count in self.data:
+            span = count / max(self.total, 1) * 360
+            if cumulative <= angle < cumulative + span:
+                self.can_id_clicked.emit(can_id)
+                break
+            cumulative += span
+
+def make_card(title, value, color, size=30, tip=None):
+    """Create a rounded metric card with a title and a large value.
+
+    The value label is kept on card.value_label so it can be updated later.
+    Pass tip to make the card clickable (hover highlight + tooltip).
+    """
+
+    card = ClickableFrame()
+    card.setObjectName("card")
+    card.setSizePolicy(
+        QSizePolicy.Policy.Expanding,
+        QSizePolicy.Policy.Fixed,
+    )
+
+    box = QHBoxLayout(card)
+    box.setContentsMargins(14, 12, 14, 12)
+    box.setSpacing(12)
+
+    # Decorative symbols only; these are not live system indicators.
+    symbols = {
+        "Frames / second": "∿",
+        "Alerts loaded": "!",
+        "Threat level": "✓",
+    }
+
+    symbol = QLabel(symbols.get(title.replace(" (sample)", ""), "•"))
+    symbol.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    symbol.setFixedSize(48, 48)
+    symbol.setStyleSheet(
+        f"background-color: #172D46;"
+        f"color: {color};"
+        "border-radius: 10px;"
+        "font-size: 24px;"
+        "font-weight: bold;"
+    )
+
+    text_box = QVBoxLayout()
+    text_box.setSpacing(3)
+
+    title_label = QLabel(title)
+    title_label.setObjectName("cardTitle")
+
+    value_label = QLabel(value)
+    value_label.setObjectName("cardValue")
+    value_label.setStyleSheet(
+        f"color: {color}; font-size: {size}px; font-weight: bold;"
+    )
+
+    text_box.addWidget(title_label)
+    text_box.addWidget(value_label)
+
+    box.addWidget(symbol)
+    box.addLayout(text_box, 1)
+
+    card.value_label = value_label
+    if tip:
+        card.setProperty("clickable", True)
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setToolTip(tip)
+
+    return card
+
+
+class FpsChart(QWidget):
+    """Frames-per-second line chart with a hover read-out."""
+
+    LEFT, RIGHT, TOP, BOTTOM = 40, 10, 8, 20
+
+    def __init__(self):
+        super().__init__()
+        self.full = []
+        self.series = []
+        self.window = 60  # seconds shown; 0 = whole recording
+        self.avg = None
+        self.hover = None
+        self.setMinimumHeight(150)
+        self.setMouseTracking(True)
+
+    def set_series(self, series, avg=None):
+        self.full, self.avg = list(series), avg
+        self._apply()
+
+    def set_window(self, seconds):
+        self.window = seconds
+        self.hover = None
+        self._apply()
+
+    def _apply(self):
+        self.series = self.full[-self.window:] if self.window else self.full
+        if self.hover is not None and self.hover >= len(self.series):
+            self.hover = None
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        n = len(self.series)
+        pw = self.width() - self.LEFT - self.RIGHT
+        if n >= 2 and pw > 0:
+            i = round((event.position().x() - self.LEFT) / pw * (n - 1))
+            self.hover = max(0, min(n - 1, i))
+            self.update()
+
+    def leaveEvent(self, event):
+        self.hover = None
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        pw, ph = w - self.LEFT - self.RIGHT, h - self.TOP - self.BOTTOM
+        p.setFont(QFont(self.font().family(), 8))
+        n = len(self.series)
+        if n < 2 or pw <= 0 or ph <= 0:
+            p.setPen(QColor("#6F89A7"))
+            p.drawText(
+                self.rect(),
+                Qt.AlignmentFlag.AlignCenter,
+                "Waiting for live CAN frames..."
+            )
+            p.end()
+            return
+
+        hi = (max(self.series) * 1.15) or 1
+
+        def xy(i, v):
+            return (self.LEFT + pw * i / (n - 1), self.TOP + ph * (1 - v / hi))
+
+        for g in range(5):
+            y = self.TOP + ph * g / 4
+            p.setPen(QPen(QColor("#203B59"), 1))
+            p.drawLine(self.LEFT, int(y), self.LEFT + pw, int(y))
+            p.setPen(QColor("#6F89A7"))
+            p.drawText(
+                0, int(y) - 7, self.LEFT - 6, 14,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                f"{hi * (4 - g) / 4:.0f}",
+            )
+
+        line = QPainterPath()
+        for i, v in enumerate(self.series):
+            x, y = xy(i, v)
+            line.moveTo(x, y) if i == 0 else line.lineTo(x, y)
+        area = QPainterPath(line)
+        area.lineTo(self.LEFT + pw, self.TOP + ph)
+        area.lineTo(self.LEFT, self.TOP + ph)
+        area.closeSubpath()
+        grad = QLinearGradient(0, self.TOP, 0, self.TOP + ph)
+        grad.setColorAt(0, QColor(32, 184, 255, 90))
+        grad.setColorAt(1, QColor(32, 184, 255, 0))
+        p.fillPath(area, QBrush(grad))
+        p.setPen(QPen(QColor("#20B8FF"), 2))
+        p.drawPath(line)
+
+        if self.avg:
+            y = self.TOP + ph * (1 - self.avg / hi)
+            p.setPen(QPen(QColor("#FFB547"), 1, Qt.PenStyle.DashLine))
+            p.drawLine(self.LEFT, int(y), self.LEFT + pw, int(y))
+
+        p.setPen(QColor("#6F89A7"))
+        p.drawText(self.LEFT, h - 16, pw, 14, Qt.AlignmentFlag.AlignLeft, f"{n} s ago")
+        p.drawText(self.LEFT, h - 16, pw, 14, Qt.AlignmentFlag.AlignRight, "latest")
+
+        if self.hover is not None:
+            x, y = xy(self.hover, self.series[self.hover])
+            p.setPen(QPen(QColor("#9FB4CE"), 1, Qt.PenStyle.DotLine))
+            p.drawLine(int(x), self.TOP, int(x), self.TOP + ph)
+            p.setBrush(QColor("#20B8FF"))
+            p.setPen(QPen(QColor("#FFFFFF"), 1))
+            p.drawEllipse(int(x) - 4, int(y) - 4, 8, 8)
+            text = f"{self.series[self.hover]} fps  ({n - 1 - self.hover} s ago)"
+            tw = p.fontMetrics().horizontalAdvance(text) + 14
+            bx = min(max(int(x) - tw // 2, self.LEFT), self.LEFT + pw - tw)
+            p.setPen(QPen(QColor("#20B8FF"), 1))
+            p.setBrush(QColor("#101F33"))
+            p.drawRoundedRect(bx, self.TOP + 2, tw, 20, 5, 5)
+            p.setPen(QColor("#DCE8F7"))
+            p.drawText(bx, self.TOP + 2, tw, 20, Qt.AlignmentFlag.AlignCenter, text)
+
+
+class HeroPanel(QWidget):
+    """
+    Top section of the dashboard. It paints the car image onto the navy
+    background so the car merges into the page instead of sitting in a box:
+
+    - Screen blend mode makes the image's black background disappear.
+    - Soft alpha fades on the left, top, bottom and right edges remove any
+      hard edge that is left.
+
+    The title, cards and gauge are normal child widgets in this panel's
+    layout. Its right margin is kept clear so they do not sit on the car.
+    """
+
+    BACKGROUND = QColor("#07111F")
+    CAR_SHARE = 0.38      # fraction of the panel width reserved for the car
+
+    def __init__(self, pixmap):
+        super().__init__()
+        self.setObjectName("hero")
+        self._source = pixmap
+        self._car = None
+        self._car_size = None
+
+    def _build_car(self, box_w, box_h):
+        """Scale the car to fit the box and fade its edges to transparent."""
+        scaled = self._source.scaled(
+            QSize(box_w, box_h),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        img = QImage(scaled.size(), QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(img)
+        painter.drawPixmap(0, 0, scaled)
+
+        # DestinationIn multiplies the image alpha by the gradient alpha.
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_DestinationIn
+        )
+
+        def fade(x1, y1, stops):
+            grad = QLinearGradient(0, 0, x1, y1)
+            for position, alpha in stops:
+                grad.setColorAt(position, QColor(0, 0, 0, alpha))
+            painter.fillRect(img.rect(), QBrush(grad))
+
+        # left edge fades in, right edge fades out
+        fade(img.width(), 0, [(0.0, 0), (0.30, 255), (0.88, 255), (1.0, 0)])
+        # top and bottom fade out
+        fade(0, img.height(), [(0.0, 0), (0.12, 255), (0.86, 255), (1.0, 0)])
+
+        painter.end()
+        return img
+
+    def resizeEvent(self, event):
+        """Keep the content column clear of the car as the window changes."""
+        super().resizeEvent(event)
+        layout = self.layout()
+        if layout is not None:
+            layout.setContentsMargins(
+                0, 8, int(self.width() * self.CAR_SHARE), 8
+            )
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self.BACKGROUND)
+
+        if self._source.isNull():
+            painter.setPen(QColor("#9FB4CE"))
+            painter.drawText(
+                self.rect().adjusted(self.width() // 2, 0, 0, 0),
+                Qt.AlignmentFlag.AlignCenter,
+                "CAR IMAGE NOT FOUND\n"
+                "dashboard/assets/can_sentinel_car.png",
+            )
+            return
+
+        box_w = int(self.width() * (self.CAR_SHARE + 0.06))
+        box_h = self.height()
+        if box_w < 10 or box_h < 10:
+            return
+
+        if self._car is None or self._car_size != (box_w, box_h):
+            self._car = self._build_car(box_w, box_h)
+            self._car_size = (box_w, box_h)
+
+        x = self.width() - self._car.width()
+        y = (self.height() - self._car.height()) // 2
+
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_Screen
+        )
+        painter.drawImage(x, y, self._car)
+
+class CANSocketReceiver(QThread):
+    frame_received = pyqtSignal(dict)
+    connection_changed = pyqtSignal(bool, str)
+
+    def __init__(self, socket_path="/tmp/can_sentinel_fanout.sock"):
+        super().__init__()
+        self.socket_path = socket_path
+        self.running = True
+
+    def run(self):
+        if not hasattr(socket, "AF_UNIX"):
+            self.connection_changed.emit(
+            False,
+            "Live CAN socket requires Linux/WSL. Showing recorded data."
+            )
+            return
+
+        while self.running:
+            client = None
+
+            try:
+                client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                client.settimeout(2)
+                client.connect(self.socket_path)
+
+                self.connection_changed.emit(
+                    True, "Connected to CAN sniffer"
+                )
+
+                buffer = b""
+
+                while self.running:
+                    try:
+                        chunk = client.recv(4096)
+
+                        if not chunk:
+                            break
+
+                        buffer += chunk
+
+                        while b"\n" in buffer:
+                            line, buffer = buffer.split(b"\n", 1)
+
+                            if not line.strip():
+                                continue
+
+                            try:
+                                frame = json.loads(line.decode("utf-8"))
+
+                                required = {
+                                    "timestamp",
+                                    "can_id",
+                                    "dlc",
+                                    "data_hex"
+                                }
+
+                                if not required.issubset(frame):
+                                    continue
+
+                                dlc = int(frame["dlc"])
+                                data_hex = str(frame["data_hex"])
+
+                                if not 0 <= dlc <= 8:
+                                    continue
+
+                                if len(data_hex) != dlc * 2:
+                                    continue
+
+                                frame["can_id"] = str(frame["can_id"])
+                                frame["data_hex"] = data_hex.upper()
+
+                                self.frame_received.emit(frame)
+
+                            except (ValueError, TypeError, UnicodeDecodeError):
+                                continue
+
+                    except socket.timeout:
+                        continue
+
+                self.connection_changed.emit(
+                    False, "CAN sniffer disconnected"
+                )
+
+            except OSError:
+                self.connection_changed.emit(
+                    False, "Waiting for CAN sniffer..."
+                )
+
+            finally:
+                if client:
+                    client.close()
+
+            # Retry connection every 2 seconds
+            for _ in range(20):
+                if not self.running:
+                    break
+                time.sleep(0.1)
+
+    def stop(self):
+        self.running = False
+
+class Dashboard(QMainWindow):
+    TAB_OVERVIEW, TAB_TRAFFIC, TAB_ALERTS = 0, 1, 2
+    
+    def update_live_labels(self, connected):
+        if connected:
+            self.setWindowTitle("CAN-Sentinel Dashboard (LIVE)")
+            self.footer_label.setText(
+                "CAN-SENTINEL  •  AUTOMOTIVE SECURITY MONITORING"
+                "  |  CONNECTED TO LIVE CAN"
+            )
+            self.source_status.setText(
+                f"Live CAN feed | {len(self.live_frames)} frames buffered"
+            )
+            self.traffic_hint.setText(
+                "Live CAN frames received from the connected sniffer."
+            )
+            self.traffic_badge.setText("LIVE CAN FRAMES ONLY | ECU SIMULATOR (LIVE)")
+        else:
+            self.setWindowTitle("CAN-Sentinel Dashboard (RECORDED)")
+            self.footer_label.setText(
+                "CAN-SENTINEL  •  AUTOMOTIVE SECURITY MONITORING"
+                "  |  RECORDED DATA MODE"
+            )
+            self.source_status.setText(
+            "Recorded file: normal_run2_1025.csv | 100 recent rows | NOT LIVE"
+            )
+            self.traffic_hint.setText(
+                "Recorded CSV rows only — this view displays recorded CSV data."
+            )
+            self.traffic_badge.setText("RECORDED DATA MODE")
+    # ------------------------------------------------------------------ data
+    def handle_live_frame(self, frame):
+        self.live_frames.append(frame)
+        self.live_mode = True
+        self.update_live_labels(connected=True)
+        self.live_fps_count += 1
+
+        self.mode_label.setText(
+            "LIVE CAN FEED  •  CONNECTED  |  Receiving frames from CAN sniffer"
+        )
+    def refresh_live_table(self):
+        if not self.live_frames:
+            return
+
+        rows = [
+            (
+                f"{float(item['timestamp']):.6f}",
+                item["can_id"],
+                str(item["dlc"]),
+                item["data_hex"],
+                "RECEIVED"
+            )
+            for item in reversed(self.live_frames)
+          ]
+        # Update CAN Traffic table
+        self._populate_table(self.traffic_table, rows)
+        # Update system health and CAN ID traffic share from live frames
+        self._update_analysis(rows)
+        self.current_rows = rows
+        self.filter_traffic_table()
+        # Update Overview table with the latest 5 frames
+        self._populate_table(self.overview_table, rows[:5])
+    
+        
+        self.statusBar().showMessage(
+        f"Live CAN traffic | {len(self.live_frames)} frames buffered"
+        )
+
+    def handle_connection_status(self, connected, message):
+        print(f"[SOCKET DEBUG] connected={connected}, message={message}")
+
+        if connected:
+            self.update_live_labels(connected=True)
+            self.mode_label.setText(
+                "LIVE CAN FEED  •  CONNECTED  |  Connected to CAN sniffer"
+            )
+        else:
+            self.live_mode = False
+            self.live_frames.clear()
+            self.live_fps_count = 0
+            self.live_fps_samples.clear()
+            self.refresh_live_data(force=True)
+            self.update_live_labels(connected=False)
+            self.mode_label.setText(
+                "LIVE CAN FEED  •  DISCONNECTED  |  Waiting for CAN sniffer"
+            )
+
+        self.statusBar().showMessage(message)
+
+    def refresh_live_data(self, force=False):
+        """Refresh the latest recorded CSV; never implies live CAN detection.
+
+        The 1-second timer skips work while "Pause refresh" is on; the
+        Refresh button and F5 pass force=True.
+        """
+        # Do not overwrite live CAN data with recorded CSV data
+        if getattr(self, "live_mode", False):
+            return
+
+        if self.paused and not force:
+            return
+        try:
+            path = find_recording(DATA_DIR)
+            recording = load_recording(path, n=100)
+            if recording:
+                rows, fps, filename, clock_steps = recording
+                self.current_recording_name = filename
+                self.current_clock_steps = clock_steps
+
+                # Update recorded FPS on every refresh
+                self.current_fps = f"{fps:.0f}"
+                self.fps_card.value_label.setText(self.current_fps)
+                self.source_status.setText(
+                    f"Recorded file: {filename} | {len(rows)} recent rows | NOT LIVE"
+                )
+                # Only rebuild tables/bars when the data changed, so a
+                # selected row or hovered bar is not reset every second.
+                if rows != self._last_rows or force:
+                    self._last_rows = list(rows)
+                    self.current_rows = list(rows)
+
+                    # Populate CAN Traffic table
+                    self._populate_table(self.traffic_table, rows)
+                    self.filter_traffic_table()
+
+                    # Update Overview table
+                    self._populate_table(self.overview_table, rows[:5])
+
+                    # Update System Health cards and CAN-ID distribution
+                    self._update_analysis(rows)
+
+                if not self.live_mode:
+                    self.fps_chart.set_series([], None)
+                    self.chart_stats.setText(
+                        "Waiting for live CAN frames..."
+                    )
+            else:
+                self.source_status.setText(
+                    "No valid data/normal_run*_*.csv recording found. Showing startup/sample rows."
+                )
+            self.last_refresh.setText(
+                "UI refresh: " + datetime.datetime.now().strftime("%H:%M:%S")
+                + ("  (auto-refresh paused)" if self.paused else "")
+            )
+        except Exception as e:
+            print(f"Dashboard refresh error: {e}")
+            if hasattr(self, "source_status"):
+                self.source_status.setText(f"Refresh error: {e}")
+    def update_live_fps(self):
+        if not self.live_mode:
+            return
+
+        now = time.monotonic()
+        elapsed = now - self.live_fps_last_tick
+
+        if elapsed < 1.0:
+            return
+
+        fps = self.live_fps_count / elapsed
+        self.live_fps_count = 0
+        self.live_fps_last_tick = now
+
+        self.live_fps_samples.append(fps)
+
+        average_fps = sum(self.live_fps_samples) / len(self.live_fps_samples)
+
+        self.fps_card.value_label.setText(f"{fps:.0f}")
+        self.fps_chart.set_series(
+            list(self.live_fps_samples),
+            average_fps
+        )
+
+        self.chart_stats.setText(
+            f"Live capture | Current: {fps:.0f} FPS | Average: {average_fps:.1f} FPS"
+        )
+
+        self.last_refresh.setText(
+            f"UI refresh: {time.strftime('%H:%M:%S')}"
+        )
+    
+    def _update_analysis(self, rows):
+        """Update CAN-ID statistics, horizontal bars and doughnut chart."""
+        if not hasattr(self, "analysis_bars"):
+            return
+
+        total = len(rows)
+        counts = {}
+
+        for row in rows:
+            can_id = str(row[1])
+            counts[can_id] = counts.get(can_id, 0) + 1
+
+        alert_rows = sum(
+            1 for row in rows if str(row[4]).upper() == "ALERT"
+        )
+
+        self.analysis_frames_card.value_label.setText(str(total))
+        self.analysis_ids_card.value_label.setText(str(len(counts)))
+        self.analysis_alerts_card.value_label.setText(str(alert_rows))
+
+        top = sorted(
+            counts.items(),
+            key=lambda item: item[1],
+            reverse=True
+        )[:8]
+
+        # Clear and rebuild only the horizontal bars.
+        while self.analysis_bars.count():
+            item = self.analysis_bars.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not top:
+            empty = QLabel("Waiting for CAN traffic...")
+            empty.setObjectName("muted")
+            self.analysis_bars.addWidget(empty)
+
+            if hasattr(self, "analysis_donut"):
+                self.analysis_donut.set_data([], 0)
+            return
+
+        for can_id, count in top:
+            row_widget = ClickableFrame()
+            row_widget.setCursor(Qt.CursorShape.PointingHandCursor)
+            row_widget.setToolTip(
+                f"Click to filter CAN Traffic by {can_id}"
+            )
+            row_widget.setStyleSheet(
+                "ClickableFrame:hover {"
+                "background-color: #122238; border-radius: 6px;}"
+            )
+            row_widget.clicked.connect(
+                lambda cid=can_id: self.filter_by_id(cid)
+            )
+
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(4, 2, 4, 2)
+            row_layout.setSpacing(10)
+
+            label = QLabel(
+                f"{can_id}  ·  {ecu_name(can_id) or 'unknown ECU'}"
+            )
+            label.setMinimumWidth(180)
+            label.setStyleSheet("color: #DCE8F7;")
+
+            bar = QProgressBar()
+            bar.setRange(0, max(total, 1))
+            bar.setValue(count)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(12)
+            bar.setStyleSheet(
+                "QProgressBar {"
+                "background:#172D46; border:0; border-radius:6px;}"
+                "QProgressBar::chunk {"
+                "background:#20B8FF; border-radius:6px;}"
+            )
+
+            value = QLabel(
+                f"{count}  ({count / max(total, 1) * 100:.1f}%)"
+            )
+            value.setMinimumWidth(95)
+            value.setStyleSheet("color: #8EA6C2;")
+
+            row_layout.addWidget(label)
+            row_layout.addWidget(bar, 1)
+            row_layout.addWidget(value)
+
+            self.analysis_bars.addWidget(row_widget)
+
+        # Update the doughnut with exactly the same data.
+        if hasattr(self, "analysis_donut"):
+            self.analysis_donut.set_data(top, total)
+
+
+    def _populate_table(self, table, rows):
+        sorting_was_enabled = table.isSortingEnabled()
+
+        table.setSortingEnabled(False)
+        table.setUpdatesEnabled(False)
+
+        try:
+            table.setRowCount(len(rows))
+
+            for r, row in enumerate(rows):
+                system = ecu_name(row[1])
+
+                shown = (
+                    row[0],
+                    row[1],
+                    system or "not in baseline",
+                    row[2],
+                    row[3],
+                    row[4]
+                )
+
+                for c, value in enumerate(shown):
+                    item = QTableWidgetItem(str(value))
+
+                    if c == 2 and system is None:
+                        item.setForeground(QColor("#FFB547"))
+
+                    if c == 5:
+                        if value == "ALERT":
+                            item.setForeground(QColor("#FF5A66"))
+                            item.setText("●  ALERT")
+
+                        elif value == "RECEIVED":
+                            item.setForeground(QColor("#58B9FF"))
+                            item.setText("●  RECEIVED")
+
+                        else:
+                            item.setForeground(QColor("#35E58B"))
+                            item.setText("●  OK")
+
+                    table.setItem(r, c, item)
+
+        finally:
+            table.setUpdatesEnabled(True)
+            table.setSortingEnabled(sorting_was_enabled)
+    # ------------------------------------------------------- gateway events
+    def send_gateway_command(self, command):
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                sock.settimeout(3)
+                sock.connect("/tmp/can_sentinel_gw.sock")
+                sock.sendall((json.dumps(command) + "\n").encode())
+                response = json.loads(sock.recv(4096).decode())
+
+            if response.get("ok"):
+                self.gateway_control_status.setText("Success: " + str(response))
+                self.refresh_gateway_events()
+            else:
+                self.gateway_control_status.setText(
+                    "Gateway rejected command: " + response.get("error", "Unknown error")
+                )
+        except Exception as exc:
+            self.gateway_control_status.setText("Gateway connection error: " + str(exc))
+
+    def quarantine_gateway_id(self):
+        can_id = self.gateway_can_id_input.text().strip()
+        try:
+            duration = float(self.gateway_duration_input.text())
+            if duration <= 0:
+                raise ValueError
+        except ValueError:
+            self.gateway_control_status.setText("Enter a valid positive duration.")
+            return
+
+        self.send_gateway_command({
+            "type": "quarantine",
+            "can_id": can_id,
+            "mode": self.gateway_mode_combo.currentText(),
+            "duration_s": duration,
+            "reason": "Dashboard manual quarantine",
+        })
+
+    def release_gateway_id(self):
+        self.send_gateway_command({
+            "type": "release",
+            "can_id": self.gateway_can_id_input.text().strip(),
+        })
+
+    def refresh_gateway_events(self):
+        """Refresh gateway quarantine history from its JSONL event log."""
+        if not hasattr(self, "gateway_table"):
+            return
+
+        events = []
+        try:
+            with open(GATEWAY_EVENT_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        # Ignore a partially written final JSONL line.
+                        continue
+                    if isinstance(event, dict) and event.get("event") in {
+                        "quarantine_start", "quarantine_end", "frame_dropped"
+                    }:
+                        events.append(event)
+        except OSError:
+            events = []
+
+        active = {}
+        now = time.time()
+        for event in events:
+            can_id = str(event.get("can_id", "Unknown"))
+            kind = event.get("event")
+            if kind == "quarantine_start":
+                try:
+                    started = float(event.get("timestamp", now))
+                    duration = max(0.0, float(event.get("duration_s", 0)))
+                except (TypeError, ValueError):
+                    started, duration = now, 0.0
+                active[can_id] = {
+                    "mode": str(event.get("mode", "unknown")),
+                    "reason": str(event.get("reason", "—")),
+                    "until": started + duration,
+                }
+            elif kind == "quarantine_end":
+                active.pop(can_id, None)
+
+        # Remove entries whose expiry passed even if the end line is not yet
+        # present in the log (for example, while the gateway is shutting down).
+        active = {cid: data for cid, data in active.items() if data["until"] > now}
+        self.gateway_active_label.setText(
+            f"ACTIVE QUARANTINES: {len(active)}"
+        )
+        self.gateway_source_label.setText(
+            f"Event log: {GATEWAY_EVENT_FILE}  |  "
+            f"{len(events)} lifecycle events"
+        )
+
+        rows = []
+        for event in reversed(events[-200:]):
+            try:
+                stamp = datetime.datetime.fromtimestamp(
+                    float(event.get("timestamp", 0))
+                ).strftime("%Y-%m-%d %H:%M:%S")
+            except (TypeError, ValueError, OSError):
+                stamp = str(event.get("timestamp", "—"))
+            can_id = str(event.get("can_id", "—"))
+            kind = str(event.get("event", "—"))
+            mode = str(event.get("mode", "—"))
+            reason = str(event.get("reason", event.get("why", "—")))
+            if kind == "quarantine_start":
+                state = "ACTIVE" if can_id in active else "EXPIRED"
+                if can_id in active:
+                    seconds = max(0, int(active[can_id]["until"] - now))
+                    state = f"ACTIVE · {seconds}s left"
+            elif kind == "frame_dropped":
+                payload = str(event.get("payload", "—"))
+                reason = f"{reason} | payload: {payload}"
+                state = "DROPPED"
+            else:
+                state = str(event.get("why", "ENDED")).upper()
+            rows.append((stamp, kind, can_id, mode, reason, state))
+
+        self.gateway_table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            for col_index, value in enumerate(row):
+                item = QTableWidgetItem(str(value))
+                if col_index == 5:
+                    item.setForeground(
+                        QColor("#35E58B") if str(value).startswith("ACTIVE")
+                        else QColor("#FFB547")
+                    )
+                self.gateway_table.setItem(row_index, col_index, item)
+        if not events:
+            self.gateway_status_label.setText(
+                "No gateway events yet. The panel will update automatically "
+                "when a quarantine event is written."
+            )
+        else:
+            self.gateway_status_label.setText(
+                "Gateway quarantine lifecycle events · newest first"
+            )
+
+    # ---------------------------------------------------------------- build
+
+    def __init__(self):
+        super().__init__()
+        self.paused = False
+        self._last_rows = None
+        self.live_frames = deque(maxlen=100)
+        self.live_mode = False
+        self.live_fps_count = 0
+        self.live_fps_last_tick = time.monotonic()
+        self.live_fps_samples = deque(maxlen=300)
+        self.live_ui_timer = QTimer(self)
+        self.live_ui_timer.timeout.connect(self.refresh_live_table)
+        self.live_ui_timer.start(100)
+        self.setWindowTitle("CAN-Sentinel Dashboard (RECORDED)")
+        self.resize(1440, 900)
+        self.setMinimumSize(760, 560)
+
+        self.car_pixmap = QPixmap(str(CAR_IMAGE_PATH))
+
+        # Mirror horizontally so the car faces right to left.
+        if not self.car_pixmap.isNull():
+            self.car_pixmap = self.car_pixmap.transformed(
+                QTransform().scale(-1, 1)
+            )
+
+        root = QWidget()
+        root.setObjectName("root")
+
+        outer_layout = QVBoxLayout(root)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
+        content = QWidget()
+        content.setObjectName("content")
+
+        page = QVBoxLayout(content)
+        page.setContentsMargins(24, 18, 24, 18)
+        page.setSpacing(12)
+
+        # ---------------- Hero: title, cards, gauge over the car ----------------
+
+        hero = HeroPanel(self.car_pixmap)
+        hero.setMinimumHeight(340)
+        hero.setMaximumHeight(400)
+
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(0, 8, 0, 8)
+        hero_layout.setSpacing(12)
+
+        subtitle = QLabel("Automotive ECU intrusion detection")
+        subtitle.setObjectName("sub")
+
+        # Honest mode banner: says exactly where the numbers came from.
+        if USING_FILES:
+            parts = []
+            parts.append(
+                f"traffic: {RECORDING_NAME}" if RECORDING_NAME
+                else "traffic: sample rows"
+            )
+            if CLOCK_STEPS:
+                parts.append(f"timestamp clock steps in file: {CLOCK_STEPS}")
+            parts.append(
+                f"alert: {ALERT_FILE.name} (sample; not ML-verified)"
+                if IS_SAMPLE_ALERT
+                else f"alert: {ALERT_FILE.name} (loaded; detection not verified)"
+                if ALERT
+                else "alert: none loaded"
+            )
+            mode_text = "REPLAYING RECORDED FILE  •  NOT LIVE  |  " + "  |  ".join(parts)
+        else:
+            mode_text = "DEMO MODE  •  STATIC SAMPLE DATA"
+
+        self.mode_label = QLabel(mode_text)
+        self.mode_label.setObjectName("muted")
+        self.mode_label.setWordWrap(True)
+
+        hero_layout.addWidget(subtitle)
+        hero_layout.addWidget(self.mode_label)
+
+        # ---------------- Three summary cards (click to jump) ----------------
+
+        name, color = threat_level(THREAT)
+
+        cards = QHBoxLayout()
+        cards.setSpacing(12)
+
+        self.fps_card = make_card(
+            "Frames / second", FRAMES_PER_SECOND, "#39C5FF",
+            tip="Open CAN Traffic",
+        )
+        self.alerts_card = make_card(
+            "Alerts loaded" + SAMPLE_TAG, ALERT_COUNT, "#FFB547",
+            tip="Open Alerts",
+        )
+        self.threat_card = make_card(
+            "Threat level" + SAMPLE_TAG, name, color,
+            tip="Open Alerts",
+        )
+        self.fps_card.clicked.connect(lambda: self.go_to(self.TAB_TRAFFIC))
+        self.alerts_card.clicked.connect(lambda: self.go_to(self.TAB_ALERTS))
+        self.threat_card.clicked.connect(lambda: self.go_to(self.TAB_ALERTS))
+        cards.addWidget(self.fps_card)
+        cards.addWidget(self.alerts_card)
+        cards.addWidget(self.threat_card)
+
+        hero_layout.addLayout(cards)
+        hero.setMinimumHeight(250)     # was 340
+        hero.setMaximumHeight(270)     # was 400
+        # ---------------- Threat score gauge ----------------
+
+        threat_row = QHBoxLayout()
+        threat_row.setSpacing(12)
+
+        score_title = QLabel("THREAT SCORE" + (" (SAMPLE)" if IS_SAMPLE_ALERT else ""))
+        score_title.setStyleSheet(
+            "color: #A9BED7; font-size: 12px; font-weight: bold;"
+        )
+
+        zero_label = QLabel("0")
+        zero_label.setStyleSheet("color: #8EA6C2;")
+
+        gauge = QProgressBar()
+        gauge.setRange(0, 100)
+        gauge.setValue(THREAT)
+        gauge.setTextVisible(False)
+        gauge.setToolTip(f"Threat score {THREAT} / 100")
+        gauge.setStyleSheet(
+            f"QProgressBar::chunk {{ background-color: {color}; }}"
+        )
+
+        score_value = QLabel(f"{THREAT} / 100")
+        score_value.setStyleSheet(
+            "color: #C8D8EB; font-size: 13px; font-weight: bold;"
+        )
+
+        threat_row.addWidget(score_title)
+        threat_row.addWidget(zero_label)
+        threat_row.addWidget(gauge, 1)
+        threat_row.addWidget(score_value)
+
+        hero_layout.addLayout(threat_row)
+
+        page.addWidget(hero, 1)
+
+        # ---------------- Latest alert banner (click to open Alerts) ----------------
+
+        alert_card = ClickableFrame()
+        alert_card.setCursor(Qt.CursorShape.PointingHandCursor)
+        alert_card.setToolTip("Open Alerts")
+        alert_card.clicked.connect(lambda: self.go_to(self.TAB_ALERTS))
+        alert_layout = QHBoxLayout(alert_card)
+        alert_layout.setContentsMargins(16, 10, 16, 10)
+        alert_layout.setSpacing(12)
+
+        alert_icon = QLabel()
+        alert_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        alert_icon.setFixedSize(46, 46)
+
+        alert_text = QVBoxLayout()
+
+        self.alert_title = QLabel(
+            "Latest alert  —  SAMPLE ALERT, not a detection"
+            if IS_SAMPLE_ALERT else "Latest alert"
+        )
+        self.alert_title.setStyleSheet("color: #B7C8DB; font-size: 12px;")
+        if IS_SAMPLE_ALERT:
+            self.alert_title.setText(
+                "Latest alert  —  ⚠ SAMPLE DATA (NOT A REAL DETECTION)"
+            )
+            self.alert_title.setStyleSheet(
+                "color: #FFB547; font-size: 12px; font-weight: bold;"
+            )
+        alert_detail = QLabel()
+        alert_detail.setTextFormat(Qt.TextFormat.RichText)
+        alert_detail.setWordWrap(True)
+        alert_detail.setStyleSheet("font-size: 15px;")
+
+        if ALERT:
+            alert_card.setObjectName("alertCard")
+            alert_icon.setText("!")
+            alert_icon.setStyleSheet(
+                "background-color: #3B1C2A;"
+                "color: #FF5A66;"
+                "border-radius: 10px;"
+                "font-size: 28px;"
+                "font-weight: bold;"
+            )
+
+            sev = str(ALERT["severity"])
+            sev_col = severity_color(sev)
+            e = html.escape  # file content is untrusted; escape before rich text
+
+            alert_detail.setText(
+                f'<span style="color:#FF5A66;font-weight:bold;">'
+                f'{e(str(ALERT["attack_type"]))} on {e(str(ALERT["suspect_id"]))}</span>'
+                f'<span style="color:#DCE8F7;">'
+                f'  |  confidence {ALERT["confidence"]:.2f}'
+                f'  |  {e(str(ALERT["affected_system"]))}'
+                f'  |  layer {e(str(ALERT["detection_layer"]))}'
+                f'  |  {e(str(ALERT["technique"]))}'
+                f'  |  severity </span>'
+                f'<span style="color:{sev_col};font-weight:bold;">{e(sev)}</span>'
+            )
+        else:
+            alert_card.setObjectName("alertCardEmpty")
+            alert_icon.setText("✓")
+            alert_icon.setStyleSheet(
+                "background-color: #12372A;"
+                "color: #35E58B;"
+                "border-radius: 10px;"
+                "font-size: 28px;"
+                "font-weight: bold;"
+            )
+            alert_detail.setText(
+                '<span style="color:#35E58B;font-weight:bold;">No alerts</span>'
+            )
+
+        alert_text.addWidget(self.alert_title)
+        alert_text.addWidget(alert_detail)
+
+        alert_layout.addWidget(alert_icon)
+        alert_layout.addLayout(alert_text, 1)
+
+        page.addWidget(alert_card)
+
+        # ---------------- Recent CAN traffic: graph + minimised table ----------------
+
+        traffic_card = QFrame()
+        traffic_card.setObjectName("trafficCard")
+
+        traffic_layout = QVBoxLayout(traffic_card)
+        traffic_layout.setContentsMargins(12, 9, 12, 10)
+        traffic_layout.setSpacing(8)
+
+        traffic_heading = QHBoxLayout()
+
+        traffic_icon = QLabel("▤")
+        traffic_icon.setStyleSheet(
+            "color: #7EC8FF; font-size: 20px;"
+        )
+
+        traffic_title = QLabel("RECENT CAN TRAFFIC")
+        traffic_title.setStyleSheet(
+            "color: #E8F2FF; font-size: 14px; font-weight: bold;"
+        )
+
+        badge_text = "LIVE CAN FRAMES ONLY | ECU SIMULATOR (LIVE)"
+        self.traffic_badge = QLabel(badge_text)
+        self.traffic_badge.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        self.traffic_badge.setStyleSheet(
+            "color: #8FA9C5;"
+            "background-color: #172D46;"
+            "padding: 5px 8px;"
+            "border-radius: 6px;"
+            "font-size: 10px;"
+            "font-weight: bold;"
+        )
+
+        self.table_toggle = QPushButton("Hide table")
+        self.table_toggle.setToolTip("Minimise the table so the graph gets the full width")
+        self.table_toggle.clicked.connect(self.toggle_overview_table)
+
+        traffic_heading.addWidget(traffic_icon)
+        traffic_heading.addWidget(traffic_title)
+        traffic_heading.addStretch(1)
+        traffic_heading.addWidget(self.traffic_badge)
+        traffic_heading.addWidget(self.table_toggle)
+
+        traffic_layout.addLayout(traffic_heading)
+
+        traffic_body = QHBoxLayout()
+        traffic_body.setSpacing(12)
+
+        # Left: frames-per-second graph with range buttons.
+        chart_box = QVBoxLayout()
+        chart_box.setSpacing(6)
+        chart_top = QHBoxLayout()
+        chart_title = QLabel("FRAMES PER SECOND")
+        chart_title.setStyleSheet("color: #A9BED7; font-size: 12px; font-weight: bold;")
+        chart_top.addWidget(chart_title)
+        chart_top.addStretch(1)
+        self.range_group = QButtonGroup(self)
+        self.fps_chart = FpsChart()
+        for text, seconds, checked in (("30 s", 30, False), ("60 s", 60, True), ("All", 0, False)):
+            b = QPushButton(text)
+            b.setCheckable(True)
+            b.setChecked(checked)
+            b.setFixedWidth(52)
+            self.range_group.addButton(b)
+            b.clicked.connect(lambda _c, s=seconds: self.fps_chart.set_window(s))
+            chart_top.addWidget(b)
+        self.chart_stats = QLabel("Waiting for live CAN frames...")
+        self.chart_stats.setObjectName("muted")
+        chart_box.addLayout(chart_top)
+        chart_box.addWidget(self.fps_chart, 1)
+        chart_box.addWidget(self.chart_stats)
+        traffic_body.addLayout(chart_box, 5)
+
+        # Right: compact table (last 5 rows).
+        table = QTableWidget(0, 6)
+        self.overview_table = table
+        table.setHorizontalHeaderLabels(
+            ["timestamp", "can_id", "system", "dlc", "data_hex", "status"]
+        )
+
+        table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
+
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(26)
+
+        table.setAlternatingRowColors(True)
+        table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        table.setStyleSheet("QTableWidget { font-size: 11px; } QHeaderView::section { padding: 5px 4px; }")
+
+        for r, row in enumerate(ROWS):
+            system = ecu_name(row[1])
+
+            # Insert system name after CAN ID.
+            shown_row = (
+                row[0],
+                row[1],
+                system if system else "not in baseline",
+                row[2],
+                row[3],
+                row[4],
+            )
+
+            for c, value in enumerate(shown_row):
+                item = QTableWidgetItem(str(value))
+
+                # Unknown CAN IDs get a neutral warning colour.
+                if c == 2 and system is None:
+                    item.setForeground(QColor("#FFB547"))
+
+                # Status is now column index 5.
+                if c == 5:
+                    if value == "ALERT":
+                        item.setForeground(QColor("#FF5A66"))
+                        item.setText("●  ALERT")
+                    else:
+                        item.setForeground(QColor("#35E58B"))
+                        item.setText("●  OK")
+
+                table.setItem(r, c, item)
+
+        table.setMinimumHeight(150)
+        table.setMaximumHeight(175)
+        traffic_body.addWidget(table, 6, Qt.AlignmentFlag.AlignTop)
+
+        traffic_layout.addLayout(traffic_body)
+        page.addWidget(traffic_card)
+
+        self.footer_label = QLabel(
+            "CAN-SENTINEL  •  AUTOMOTIVE SECURITY MONITORING CONCEPT"
+            "  |  RECORDED DATA MODE"
+        )
+        self.footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.footer_label.setStyleSheet("color: #6F89A7; font-size: 10px;")
+
+        page.addWidget(self.footer_label)
+
+        scroll.setWidget(content)
+
+        # ---------------- Interactive tabs ----------------
+        self.current_rows = []
+        self.current_recording_name = RECORDING_NAME
+        self.current_fps = FRAMES_PER_SECOND
+        self.current_clock_steps = CLOCK_STEPS
+
+        tabs = QTabWidget()
+        self.tabs = tabs
+        tabs.setDocumentMode(True)
+        tabs.addTab(scroll, "Overview")
+
+        # ----- CAN Traffic tab -----
+        traffic_page = QWidget()
+        traffic_layout2 = QVBoxLayout(traffic_page)
+        traffic_layout2.setContentsMargins(18, 16, 18, 16)
+        traffic_layout2.setSpacing(10)
+        traffic_title2 = QLabel("CAN Traffic Explorer")
+        traffic_title2.setStyleSheet("font-size: 20px; font-weight: bold; color: #FFFFFF;")
+        self.traffic_hint = QLabel("Recorded CSV rows only.")
+        self.traffic_hint.setObjectName("muted")
+
+        self.traffic_search = QLineEdit()
+        self.traffic_search.setPlaceholderText("Filter by CAN ID, ECU/system, status, or data hex…")
+        self.traffic_search.setClearButtonEnabled(True)
+        self.traffic_search.textChanged.connect(self.filter_traffic_table)
+
+        self.status_filter = QComboBox()
+        self.status_filter.addItems([
+            "All status",
+            "OK only",
+            "ALERT only",
+            "RECEIVED only"
+        ])
+        self.status_filter.currentIndexChanged.connect(self.filter_traffic_table)
+
+        self.pause_button = QPushButton("⏸  Pause refresh")
+        self.pause_button.setCheckable(True)
+        self.pause_button.setToolTip("Freeze the tables so you can inspect rows")
+        self.pause_button.toggled.connect(self.set_paused)
+
+        export_button = QPushButton("Export shown rows (CSV)")
+        export_button.clicked.connect(self.export_traffic_csv)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(8)
+        controls.addWidget(self.traffic_search, 1)
+        controls.addWidget(self.status_filter)
+        controls.addWidget(self.pause_button)
+        controls.addWidget(export_button)
+
+        self.traffic_table = QTableWidget(0, 6)
+        self.traffic_table.setHorizontalHeaderLabels(["timestamp", "can_id", "system", "dlc", "data_hex", "status"])
+        self.traffic_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.traffic_table.verticalHeader().setVisible(False)
+        self.traffic_table.setAlternatingRowColors(True)
+        self.traffic_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.traffic_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.traffic_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.traffic_table.itemSelectionChanged.connect(self.show_row_detail)
+        self._populate_table(self.traffic_table, self.current_rows)
+
+        self.row_detail = QLabel("Select a row to decode it.")
+        self.row_detail.setTextFormat(Qt.TextFormat.RichText)
+        self.row_detail.setWordWrap(True)
+        self.row_detail.setStyleSheet(
+            "background-color: #101F33; border: 1px solid #294967;"
+            " border-left: 4px solid #20B8FF; border-radius: 8px; padding: 10px;"
+        )
+        self.traffic_count = QLabel("")
+        self.traffic_count.setObjectName("muted")
+
+        traffic_layout2.addWidget(traffic_title2)
+        traffic_layout2.addWidget(self.traffic_hint)
+        traffic_layout2.addLayout(controls)
+        traffic_layout2.addWidget(self.traffic_table, 1)
+        traffic_layout2.addWidget(self.traffic_count)
+        traffic_layout2.addWidget(self.row_detail)
+        tabs.addTab(traffic_page, "CAN Traffic")
+
+        # ----- Alerts tab -----
+        alerts_page = QWidget()
+        alerts_layout = QVBoxLayout(alerts_page)
+        alerts_layout.setContentsMargins(18, 16, 18, 16)
+        alerts_layout.setSpacing(14)
+        alerts_title = QLabel("Alert Review")
+        alerts_title.setStyleSheet("font-size: 20px; font-weight: bold; color: #FFFFFF;")
+        if ALERT:
+            if IS_SAMPLE_ALERT:
+                alert_kind = (
+                    "SAMPLE ALERT — NOT A REAL DETECTOR FINDING\n"
+                    "Source: Sample alert file\n"
+                    "Verification: Not verified by the ML detection engine"
+                )
+            else:
+                alert_kind = (
+                "ALERT LOADED — VERIFICATION PENDING\n"
+                f"Source: {ALERT_FILE.name}\n"
+                "Verification: ML detection not confirmed"
+                )
+
+            alert_summary = (
+                f"{alert_kind}\n\n"
+                f"Type: {ALERT.get('attack_type', 'Unknown')}\n"
+                f"CAN ID: {ALERT.get('suspect_id', 'Unknown')}\n"
+                f"Severity: {ALERT.get('severity', 'Unknown')}\n"
+                f"Confidence: {ALERT.get('confidence', 0):.2f}\n"
+                f"Affected system: {ALERT.get('affected_system', 'Unknown')}\n"
+                f"Detection layer: {ALERT.get('detection_layer', 'Unknown')}\n"
+                f"Technique: {ALERT.get('technique', 'Unknown')}"
+            )
+        else:
+            alert_summary = (
+                "NO ALERT LOADED\n\n"
+                "No alert data is available in the dashboard.\n"
+                "This does not confirm that the CAN traffic is safe."
+            )
+        self.alert_summary = alert_summary
+        self.alert_reviewed = False
+        self.alert_details = QLabel(alert_summary)
+        self.alert_details.setWordWrap(True)
+        self.alert_details.setMinimumHeight(220)
+        self.alert_details.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._style_alert_details("#FFB547")
+
+        self.review_button = QPushButton("Mark as reviewed")
+        self.review_button.setCheckable(True)
+        self.review_button.setEnabled(bool(ALERT))
+        self.review_button.toggled.connect(self.set_alert_reviewed)
+        copy_button = QPushButton("Copy details")
+        copy_button.setEnabled(bool(ALERT))
+        copy_button.clicked.connect(
+            lambda: QApplication.clipboard().setText(self.alert_summary)
+        )
+        show_id_button = QPushButton("Show this ID in CAN Traffic")
+        show_id_button.setEnabled(bool(ALERT))
+        show_id_button.clicked.connect(
+            lambda: self.filter_by_id(str(ALERT["suspect_id"]))
+        )
+        alert_buttons = QHBoxLayout()
+        alert_buttons.setSpacing(8)
+        alert_buttons.addWidget(self.review_button)
+        alert_buttons.addWidget(copy_button)
+        alert_buttons.addWidget(show_id_button)
+        alert_buttons.addStretch(1)
+
+        alerts_layout.addWidget(alerts_title)
+        alerts_layout.addWidget(self.alert_details)
+        alerts_layout.addLayout(alert_buttons)
+        alerts_layout.addStretch(1)
+        tabs.addTab(alerts_page, "Alerts")
+
+        # ----- Gateway Events tab -----
+        gateway_page = QWidget()
+        gateway_layout = QVBoxLayout(gateway_page)
+        gateway_layout.setContentsMargins(18, 16, 18, 16)
+        gateway_layout.setSpacing(10)
+        gateway_title = QLabel("Security Gateway Monitor")
+        gateway_title.setStyleSheet(
+            "font-size: 20px; font-weight: bold; color: #FFFFFF;"
+        )
+        self.gateway_active_label = QLabel("ACTIVE QUARANTINES: 0")
+        self.gateway_active_label.setStyleSheet(
+            "color: #35E58B; font-size: 15px; font-weight: bold; "
+            "background: #10251D; border: 1px solid #1F6B45; "
+            "border-radius: 8px; padding: 12px;"
+        )
+        self.gateway_status_label = QLabel(
+            "Waiting for gateway event log..."
+        )
+        self.gateway_status_label.setObjectName("muted")
+        self.gateway_source_label = QLabel(
+            f"Event log: {GATEWAY_EVENT_FILE}"
+        )
+        self.gateway_source_label.setWordWrap(True)
+        self.gateway_source_label.setObjectName("muted")
+        self.gateway_table = QTableWidget(0, 6)
+        self.gateway_table.setHorizontalHeaderLabels([
+            "timestamp", "event", "can_id", "mode", "reason", "status"
+        ])
+        self.gateway_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
+        self.gateway_table.verticalHeader().setVisible(False)
+        self.gateway_table.setAlternatingRowColors(True)
+        self.gateway_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.gateway_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        gateway_refresh = QPushButton("↻  Refresh gateway events")
+        gateway_refresh.clicked.connect(self.refresh_gateway_events)
+        gateway_layout.addWidget(gateway_title)
+        gateway_layout.addWidget(self.gateway_active_label)
+        gateway_layout.addWidget(self.gateway_status_label)
+        gateway_layout.addWidget(self.gateway_source_label)
+        # Gateway quarantine controls
+        gateway_controls = QHBoxLayout()
+
+        self.gateway_can_id_input = QLineEdit("0x7DF")
+        self.gateway_can_id_input.setMaximumWidth(110)
+
+        self.gateway_mode_combo = QComboBox()
+        self.gateway_mode_combo.addItems(["drop", "counter"])
+
+        self.gateway_duration_input = QLineEdit("30")
+        self.gateway_duration_input.setMaximumWidth(80)
+
+        quarantine_button = QPushButton("Quarantine")
+        quarantine_button.clicked.connect(self.quarantine_gateway_id)
+
+        release_button = QPushButton("Release")
+        release_button.clicked.connect(self.release_gateway_id)
+
+        self.gateway_control_status = QLabel("Gateway controls ready")
+        self.gateway_control_status.setObjectName("muted")
+
+        gateway_controls.addWidget(QLabel("CAN ID:"))
+        gateway_controls.addWidget(self.gateway_can_id_input)
+        gateway_controls.addWidget(self.gateway_mode_combo)
+        gateway_controls.addWidget(self.gateway_duration_input)
+        gateway_controls.addWidget(quarantine_button)
+        gateway_controls.addWidget(release_button)
+
+        gateway_layout.addLayout(gateway_controls)
+        gateway_layout.addWidget(self.gateway_control_status)
+
+        gateway_layout.addWidget(self.gateway_table, 1)
+        gateway_layout.addWidget(
+            gateway_refresh, 0, Qt.AlignmentFlag.AlignLeft
+        )
+        tabs.addTab(gateway_page, "Gateway Events")
+
+        # ---------------- System health (collapsible, on Overview) ----------------
+        # Kept inline on the Overview: no separate Analysis/System Status tabs.
+
+        status_card = QFrame()
+        status_card.setObjectName("trafficCard")
+        status_card_layout = QVBoxLayout(status_card)
+        status_card_layout.setContentsMargins(16, 14, 16, 14)
+        status_card_layout.setSpacing(10)
+
+        status_head = QHBoxLayout()
+        status_heading = QLabel("SYSTEM HEALTH")
+        status_heading.setStyleSheet("color: #A9BED7; font-size: 13px; font-weight: bold;")
+        self.health_toggle = QPushButton("Collapse")
+        self.health_toggle.clicked.connect(self.toggle_health)
+        status_head.addWidget(status_heading)
+        status_head.addStretch(1)
+        status_head.addWidget(self.health_toggle)
+        status_card_layout.addLayout(status_head)
+
+        self.health_body = QWidget()
+        body_layout = QVBoxLayout(self.health_body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(10)
+
+        status_metrics = QHBoxLayout()
+        status_metrics.setSpacing(12)
+        self.analysis_frames_card = make_card("Frames in view", str(len(self.current_rows)), "#39C5FF")
+        self.analysis_ids_card = make_card("Unique CAN IDs", str(len(set(r[1] for r in self.current_rows))), "#39C5FF")
+        self.analysis_alerts_card = make_card("Rows labelled ALERT", str(sum(1 for r in self.current_rows if str(r[4]).upper() == "ALERT")), "#FFB547")
+        status_metrics.addWidget(self.analysis_frames_card)
+        status_metrics.addWidget(self.analysis_ids_card)
+        status_metrics.addWidget(self.analysis_alerts_card)
+        body_layout.addLayout(status_metrics)
+
+        self.source_status = QLabel()
+        self.source_status.setWordWrap(True)
+        self.last_refresh = QLabel("UI refresh: waiting…")
+        self.detector_status = QLabel("ML detector: not connected through this dashboard")
+        self.detector_status.setWordWrap(True)
+        for label in (self.source_status, self.last_refresh, self.detector_status):
+            label.setStyleSheet("background-color: #101F33; border: 1px solid #203B59; border-radius: 8px; padding: 10px; color: #DCE8F7;")
+        body_layout.addWidget(self.source_status)
+        body_layout.addWidget(self.last_refresh)
+        body_layout.addWidget(self.detector_status)
+
+        refresh_button = QPushButton("↻  Refresh recorded data")
+        refresh_button.clicked.connect(lambda: self.refresh_live_data(True))
+        body_layout.addWidget(refresh_button, 0, Qt.AlignmentFlag.AlignLeft)
+
+        # Compact CAN-ID distribution bars (click a bar to filter traffic).
+               # CAN-ID distribution: bars + doughnut side by side
+        dist_title = QLabel("TRAFFIC SHARE BY CAN ID")
+        dist_title.setStyleSheet(
+            "color: #A9BED7; font-size: 13px; font-weight: bold; margin-top: 4px;"
+        )
+        body_layout.addWidget(dist_title)
+
+        dist_container = QWidget()
+        dist_layout = QHBoxLayout(dist_container)
+        dist_layout.setContentsMargins(0, 0, 0, 0)
+        dist_layout.setSpacing(20)
+
+        # Existing clickable horizontal bars
+        bars_widget = QWidget()
+        self.analysis_bars = QVBoxLayout(bars_widget)
+        self.analysis_bars.setContentsMargins(0, 0, 0, 0)
+        self.analysis_bars.setSpacing(7)
+
+        # Doughnut chart
+        self.analysis_donut = DonutChart()
+        self.analysis_donut.can_id_clicked.connect(self.filter_by_id)
+
+        dist_layout.addWidget(bars_widget, 3)
+        dist_layout.addWidget(self.analysis_donut, 2)
+
+        body_layout.addWidget(dist_container)
+        status_card_layout.addWidget(self.health_body)
+        page.addWidget(status_card)
+
+                # ---------------- Header: title + tabs on one row ----------------
+        tabs.tabBar().hide()  # the header buttons below replace the tab bar
+        header = QWidget()
+        header.setObjectName("content")
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(24, 10, 24, 0)
+        header_row.setSpacing(0)
+        title_a = QLabel("CAN-")
+        title_a.setObjectName("heading")
+        title_b = QLabel("Sentinel")
+        title_b.setObjectName("headingAccent")
+        header_row.addWidget(title_a)
+        header_row.addWidget(title_b)
+        header_row.addSpacing(32)
+        self.nav_group = QButtonGroup(self)
+        self.nav_buttons = []
+        for i in range(tabs.count()):
+            b = QPushButton(tabs.tabText(i))
+            b.setObjectName("navTab")
+            b.setCheckable(True)
+            b.setChecked(i == 0)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _c, i=i: tabs.setCurrentIndex(i))
+            self.nav_group.addButton(b)
+            self.nav_buttons.append(b)
+            header_row.addWidget(b, 0, Qt.AlignmentFlag.AlignBottom)
+        header_row.addStretch(1)
+        tabs.currentChanged.connect(lambda i: self.nav_buttons[i].setChecked(True))
+        outer_layout.addWidget(header)
+
+        outer_layout.addWidget(tabs, 1)
+        self.refresh_live_data(True)
+
+        # Auto-refresh every second (skipped while paused).
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.setInterval(1000)
+        self.refresh_timer.timeout.connect(self.refresh_live_data)
+        self.refresh_timer.timeout.connect(self.update_live_fps)
+        self.refresh_timer.timeout.connect(self.refresh_gateway_events)
+        self.refresh_timer.start()
+        self.refresh_gateway_events()
+
+        # ---------------- Zoom controls ----------------
+
+        zoom_bar = QHBoxLayout()
+        zoom_bar.setContentsMargins(12, 5, 12, 5)
+        zoom_bar.setSpacing(8)
+
+        zoom_title = QLabel("ZOOM")
+        zoom_title.setStyleSheet(
+            "color: #9FB4CE; font-size: 10px; font-weight: bold;"
+        )
+
+        zoom_out = QPushButton("−")
+        zoom_out.setFixedWidth(34)
+
+        self.zoom_slider = QSlider(Qt.Orientation.Horizontal)
+        self.zoom_slider.setRange(80, 120)
+        self.zoom_slider.setValue(100)
+        self.zoom_slider.setFixedWidth(130)
+
+        zoom_in = QPushButton("+")
+        zoom_in.setFixedWidth(34)
+
+        self.zoom_value = QLabel("100%")
+        self.zoom_value.setMinimumWidth(42)
+
+        reset_button = QPushButton("Reset")
+
+        zoom_out.clicked.connect(
+            lambda: self.zoom_slider.setValue(
+                max(80, self.zoom_slider.value() - 5)
+            )
+        )
+        zoom_in.clicked.connect(
+            lambda: self.zoom_slider.setValue(
+                min(120, self.zoom_slider.value() + 5)
+            )
+        )
+        reset_button.clicked.connect(
+            lambda: self.zoom_slider.setValue(100)
+        )
+        self.zoom_slider.valueChanged.connect(self.set_zoom)
+
+        zoom_bar.addStretch(1)
+        zoom_bar.addWidget(zoom_title)
+        zoom_bar.addWidget(zoom_out)
+        zoom_bar.addWidget(self.zoom_slider)
+        zoom_bar.addWidget(zoom_in)
+        zoom_bar.addWidget(self.zoom_value)
+        zoom_bar.addWidget(reset_button)
+        zoom_bar.addStretch(1)
+
+        zoom_container = QWidget()
+        zoom_container.setLayout(zoom_bar)
+        zoom_container.setStyleSheet(
+            "background-color: #0B1727;"
+            "border-top: 1px solid #203B59;"
+        )
+
+        outer_layout.addWidget(zoom_container)
+
+        QShortcut(
+            QKeySequence("Ctrl++"),
+            self,
+            activated=lambda: self.zoom_slider.setValue(
+                min(120, self.zoom_slider.value() + 5)
+            ),
+        )
+        QShortcut(
+            QKeySequence("Ctrl+-"),
+            self,
+            activated=lambda: self.zoom_slider.setValue(
+                max(80, self.zoom_slider.value() - 5)
+            ),
+        )
+        QShortcut(
+            QKeySequence("Ctrl+0"),
+            self,
+            activated=lambda: self.zoom_slider.setValue(100),
+        )
+        for n in range(4):
+            QShortcut(
+                QKeySequence(f"Ctrl+{n + 1}"), self,
+                activated=lambda n=n: self.tabs.setCurrentIndex(n),
+            )
+        QShortcut(QKeySequence("F5"), self, activated=lambda: self.refresh_live_data(True))
+        QShortcut(QKeySequence("Ctrl+F"), self, activated=self.focus_search)
+
+        self.setCentralWidget(root)
+        # Live CAN socket receiver
+        self.can_receiver = CANSocketReceiver()
+        self.can_receiver.frame_received.connect(
+            self.handle_live_frame
+        )
+        self.can_receiver.connection_changed.connect(
+            self.handle_connection_status
+        )
+        self.can_receiver.start()
+    # ----------------------------------------------------------- interaction
+
+    def go_to(self, index):
+        self.tabs.setCurrentIndex(index)
+
+    def focus_search(self):
+        self.tabs.setCurrentIndex(self.TAB_TRAFFIC)
+        self.traffic_search.setFocus()
+        self.traffic_search.selectAll()
+
+    def filter_by_id(self, can_id):
+        """Jump to CAN Traffic with the search box set to one CAN ID."""
+        self.status_filter.setCurrentIndex(0)
+        self.traffic_search.setText(str(can_id))
+        self.tabs.setCurrentIndex(self.TAB_TRAFFIC)
+
+    def toggle_overview_table(self):
+        show = not self.overview_table.isVisible()
+        self.overview_table.setVisible(show)
+        self.table_toggle.setText("Hide table" if show else "Show table")
+
+    def toggle_health(self):
+        show = not self.health_body.isVisible()
+        self.health_body.setVisible(show)
+        self.health_toggle.setText("Collapse" if show else "Expand")
+
+    def set_paused(self, paused):
+        self.paused = paused
+        self.pause_button.setText("▶  Resume refresh" if paused else "⏸  Pause refresh")
+        if paused:
+            self.last_refresh.setText(self.last_refresh.text() + "  (auto-refresh paused)")
+        else:
+            self.refresh_live_data(True)
+
+    def _style_alert_details(self, accent):
+        self.alert_details.setStyleSheet(
+            "background-color: #101F33; border: 1px solid #294967; "
+            f"border-left: 4px solid {accent}; border-radius: 10px; "
+            "padding: 20px; font-size: 14px; line-height: 1.4;"
+        )
+
+    def set_alert_reviewed(self, reviewed):
+        self.alert_reviewed = reviewed
+        self.review_button.setText("Reviewed ✓  (click to undo)" if reviewed else "Mark as reviewed")
+        self._style_alert_details("#35E58B" if reviewed else "#FFB547")
+        prefix = "REVIEWED\n\n" if reviewed else ""
+        self.alert_details.setText(prefix + self.alert_summary)
+        base = (
+            "Latest alert  —  SAMPLE ALERT, not a detection"
+            if IS_SAMPLE_ALERT else "Latest alert"
+        )
+        self.alert_title.setText(base + ("  •  reviewed" if reviewed else ""))
+
+    def filter_traffic_table(self, _arg=None):
+        needle = self.traffic_search.text().strip().lower()
+        mode = self.status_filter.currentIndex()
+        # 0 = All, 1 = OK, 2 = ALERT, 3 = RECEIVED
+
+        table = self.traffic_table
+        shown = 0
+
+        for row in range(table.rowCount()):
+            status_item = table.item(row, 5)
+            status_text = status_item.text() if status_item else ""
+
+            is_alert = "ALERT" in status_text
+            is_received = "RECEIVED" in status_text
+
+            match = (
+                mode == 0
+                or (mode == 1 and not is_alert and not is_received)
+                or (mode == 2 and is_alert)
+                or (mode == 3 and is_received)
+            )
+
+            if match and needle:
+                match = any(
+                    table.item(row, col)
+                    and needle in table.item(row, col).text().lower()
+                    for col in range(table.columnCount())
+                )
+
+            table.setRowHidden(row, not match)
+            shown += int(match)
+
+        self.traffic_count.setText(
+            f"Showing {shown} of {table.rowCount()} recent rows"
+        )
+
+    def show_row_detail(self):
+        """Display readable details for the selected CAN frame."""
+
+        table = self.traffic_table
+        r = table.currentRow()
+
+        if r < 0 or table.isRowHidden(r) or not table.item(r, 0):
+            self.row_detail.setText(
+                "<b>FRAME DETAILS</b><br>"
+                "Select a CAN frame from the table to inspect it."
+            )
+            return
+
+        ts, cid, system, dlc, data, status = (
+        table.item(r, c).text() for c in range(6)
+        )
+
+        status = status.replace("●", "").strip()
+        pairs = " ".join(
+           data[i:i + 2] for i in range(0, len(data), 2)
+        )
+
+        e = html.escape
+        status_color = (
+          "#FF5A66" if status == "ALERT"
+          else "#35E58B" if status == "OK"
+          else "#58B9FF"
+        )
+
+        self.row_detail.setText(
+          "<div style='font-size:15px;'>"
+          "<h3 style='color:#20B8FF;'>SELECTED CAN FRAME DETAILS</h3>"
+          f"<b>CAN ID:</b> {e(cid)}<br>"
+          f"<b>ECU / System:</b> {e(system)}<br>"
+          f"<b>Timestamp:</b> {e(ts)}<br>"
+          f"<b>DLC:</b> {e(dlc)} bytes<br>"
+          f"<b>Payload (hex):</b> "
+          f"<span style='font-family:Consolas; color:#58B9FF;'>"
+          f"{e(pairs)}</span><br>"
+          f"<b>Status:</b> "
+          f"<span style='color:{status_color}; font-weight:bold;'>"
+          f"{e(status)}</span><br><br>"
+          "<span style='color:#9FB4CE;'>"
+          "DLC = number of data bytes. "
+          "Payload = raw CAN data represented in hexadecimal. "
+          "ECU/System = mapped name based on the CAN ID."
+          "</span></div>"
+        )
+
+    def export_traffic_csv(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export shown rows", "can_traffic_export.csv", "CSV files (*.csv)"
+        )
+        if not path:
+            return
+        t = self.traffic_table
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow([t.horizontalHeaderItem(c).text() for c in range(t.columnCount())])
+                for r in range(t.rowCount()):
+                    if t.isRowHidden(r):
+                        continue
+                    w.writerow([
+                        t.item(r, c).text().replace("●", "").strip() if t.item(r, c) else ""
+                        for c in range(t.columnCount())
+                    ])
+            self.traffic_count.setText(f"Exported shown rows to {Path(path).name}")
+        except OSError as e:
+            self.traffic_count.setText(f"Export failed: {e}")
+
+    def set_zoom(self, value):
+        """Scale dashboard fonts proportionally."""
+
+        self.zoom_value.setText(f"{value}%")
+        scale = value / 100.0
+
+        for widget in [self] + self.findChildren(QWidget):
+            if not hasattr(widget, "_original_font_size"):
+                widget._original_font_size = widget.font().pointSizeF()
+
+            original = widget._original_font_size
+
+            if original > 0:
+                font = widget.font()
+                font.setPointSizeF(original * scale)
+                widget.setFont(font)
+
+    def closeEvent(self, event):
+        if hasattr(self, "can_receiver"):
+            self.can_receiver.stop()
+            self.can_receiver.wait(3000)
+
+        event.accept()
+    
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setStyleSheet(STYLE)
+
+    window = Dashboard()
+    window.show()
+
+    sys.exit(app.exec())
