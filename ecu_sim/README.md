@@ -153,12 +153,39 @@ Available build targets:
 
 | Command | Action | Description |
 | :--- | :--- | :--- |
-| `make` / `make all` | Compile binaries | Builds `ecu_simulator` and `test_payloads` with `-Wall -Wextra -Wpedantic -std=c11 -O2 -pthread` |
+| `make` / `make all` | Compile binaries | Builds `ecu_simulator`, `test_payloads`, and `brake_receiver` with `-Wall -Wextra -Wpedantic -std=c11 -O2 -pthread` |
 | `make test` | Run test suite | Compiles and executes the 7/7 automated unit test suite |
-| `make dashboard` | Launch dashboard | Launches the EV Sport Digital Dashboard & WebSocket bridge (`http://localhost:8080`) |
+| `make run` | Run simulator (ST) | Runs single-threaded baseline simulator (supports `IFACE=vcan0/1`, `SEED=N`, `DURATION=S`) |
+| `make run-mt` | Run simulator (MT) | Runs 6-pthreads multi-threaded distributed architecture (`--threads`) |
+| `make run-receiver` | Run brake actuator | Runs the fail-safe brake actuator receiver on `IFACE` (defaults to `vcan0`, timeout: 100 ms) |
+| `make dashboard` | Launch dashboard | Launches the EV Sport Digital Dashboard & WebSocket bridge (`http://localhost:8080`, supports `IFACE=vcan1`) |
 | `make setup-vcan` | Setup network | Configures and activates virtual CAN interfaces (`vcan0` vehicle bus & `vcan1` protected safety bus) |
 | `make clean` | Clean workspace | Safely deletes compiled executable binaries |
 | `make help` | Help menu | Prints target descriptions and usage guide |
+
+#### Make Execution Examples
+
+```bash
+# 1. Run baseline single-threaded simulator on vcan0
+make run
+
+# 2. Run single-threaded simulator with deterministic seed and 10-minute duration
+make run SEED=42 DURATION=600
+
+# 3. Run multi-threaded distributed architecture (6 pthreads + C11 atomics)
+make run-mt
+
+# 4. Run simulator on isolated virtual safety bus vcan1
+make run-mt IFACE=vcan1
+
+# 5. Run fail-safe brake actuator receiver (defaults to vcan0, or pass IFACE=vcan1)
+make run-receiver
+make run-receiver IFACE=vcan1 TIMEOUT=100
+
+# 6. Launch EV Sport Digital Dashboard bridge (defaults to vcan0, or pass IFACE=vcan1)
+make dashboard
+make dashboard IFACE=vcan1
+```
 
 ### Alternative: Manual Compilation (without Make)
 

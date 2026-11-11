@@ -8,7 +8,15 @@ CFLAGS  := -Wall -Wextra -Wpedantic -std=c11 -O2 -pthread
 LDLIBS  := -lpthread -lrt
 TARGETS := ecu_simulator test_payloads brake_receiver
 
-.PHONY: all clean test setup-vcan dashboard help
+# Configurable Runtime Variables (can be overridden from CLI, e.g. make run IFACE=vcan1 SEED=42)
+IFACE    ?= vcan0
+SEED     ?=
+DURATION ?=
+LOG      ?=
+TIMEOUT  ?= 100
+ARGS     ?=
+
+.PHONY: all clean test setup-vcan run run-mt run-receiver dashboard help
 
 # Default target: compile simulator, automated test runner, and brake receiver
 all: $(TARGETS)
@@ -28,6 +36,51 @@ test: test_payloads
 	@echo "Running CAN-Sentinel automated payload unit tests..."
 	@echo "===================================================="
 	./test_payloads
+
+# Run the single-threaded baseline ECU simulator
+run: ecu_simulator
+	@cmd="./ecu_simulator -i $(IFACE)"; \
+	if [ -n "$(DURATION)" ]; then \
+		cmd="$$cmd -d $(DURATION)"; \
+	fi; \
+	if [ -n "$(LOG)" ]; then \
+		cmd="$$cmd -l $(LOG)"; \
+	fi; \
+	if [ -n "$(ARGS)" ]; then \
+		cmd="$$cmd $(ARGS)"; \
+	fi; \
+	if [ -n "$(SEED)" ]; then \
+		cmd="$$cmd $(SEED)"; \
+	fi; \
+	echo "Launching Single-Threaded Simulator on $(IFACE)..."; \
+	exec $$cmd
+
+# Run the multi-threaded distributed ECU simulator (6 pthreads + atomics)
+run-mt: ecu_simulator
+	@cmd="./ecu_simulator -i $(IFACE) --threads"; \
+	if [ -n "$(DURATION)" ]; then \
+		cmd="$$cmd -d $(DURATION)"; \
+	fi; \
+	if [ -n "$(LOG)" ]; then \
+		cmd="$$cmd -l $(LOG)"; \
+	fi; \
+	if [ -n "$(ARGS)" ]; then \
+		cmd="$$cmd $(ARGS)"; \
+	fi; \
+	if [ -n "$(SEED)" ]; then \
+		cmd="$$cmd $(SEED)"; \
+	fi; \
+	echo "Launching Multi-Threaded Distributed Simulator on $(IFACE)..."; \
+	exec $$cmd
+
+# Run the Fail-Safe Brake Actuator Receiver (defaults to vcan0)
+run-receiver: brake_receiver
+	@cmd="./brake_receiver -i $(IFACE) -t $(TIMEOUT)"; \
+	if [ -n "$(ARGS)" ]; then \
+		cmd="$$cmd $(ARGS)"; \
+	fi; \
+	echo "Launching Fail-Safe Brake Receiver on $(IFACE) (Timeout: $(TIMEOUT) ms)..."; \
+	exec $$cmd
 
 # Setup and bring up the virtual CAN interfaces (vcan0 and vcan1 for gateway)
 setup-vcan:
@@ -53,17 +106,17 @@ setup-vcan:
 # Launch the real-time Web-Based EV Sport Dashboard bridge
 dashboard:
 	@if [ -f "dashboard/bridge.py" ]; then \
-		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
-		python3 dashboard/bridge.py --interface vcan0 --port 8080; \
+		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080 (interface $(IFACE))..."; \
+		python3 dashboard/bridge.py --interface $(IFACE) --port 8080; \
 	elif [ -f "bridge.py" ]; then \
-		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
-		python3 bridge.py --interface vcan0 --port 8080; \
+		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080 (interface $(IFACE))..."; \
+		python3 bridge.py --interface $(IFACE) --port 8080; \
 	elif [ -f "../docs/member-1/dashboard/bridge.py" ]; then \
-		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
-		python3 ../docs/member-1/dashboard/bridge.py --interface vcan0 --port 8080; \
+		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080 (interface $(IFACE))..."; \
+		python3 ../docs/member-1/dashboard/bridge.py --interface $(IFACE) --port 8080; \
 	elif [ -f "docs/member-1/dashboard/bridge.py" ]; then \
-		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080..."; \
-		python3 docs/member-1/dashboard/bridge.py --interface vcan0 --port 8080; \
+		echo "Starting CAN-Sentinel Web Dashboard Bridge on http://localhost:8080 (interface $(IFACE))..."; \
+		python3 docs/member-1/dashboard/bridge.py --interface $(IFACE) --port 8080; \
 	else \
 		echo "Error: bridge.py not found in dashboard/ or current directory."; \
 		exit 1; \
@@ -77,9 +130,12 @@ clean:
 # Display help menu
 help:
 	@echo "CAN-Sentinel Build System Targets:"
-	@echo "  make            - Build ecu_simulator, test_payloads, and brake_receiver"
-	@echo "  make test       - Build and run the automated unit test suite"
-	@echo "  make setup-vcan - Configure and activate virtual CAN interfaces (vcan0 & vcan1)"
-	@echo "  make dashboard  - Launch the real-time Web EV Sport Dashboard (http://localhost:8080)"
-	@echo "  make clean      - Remove compiled executable binaries"
-	@echo "  make help       - Display this help message"
+	@echo "  make                 - Build ecu_simulator, test_payloads, and brake_receiver"
+	@echo "  make test            - Build and run the automated unit test suite (7/7)"
+	@echo "  make setup-vcan      - Configure and activate virtual CAN interfaces (vcan0 & vcan1)"
+	@echo "  make run             - Run single-threaded simulator (IFACE=vcan0/vcan1, SEED=N, DURATION=S)"
+	@echo "  make run-mt          - Run multi-threaded distributed simulator (--threads)"
+	@echo "  make run-receiver    - Run fail-safe brake actuator receiver on IFACE (default: vcan0)"
+	@echo "  make dashboard       - Launch the real-time Web EV Sport Dashboard (http://localhost:8080)"
+	@echo "  make clean           - Remove compiled executable binaries"
+	@echo "  make help            - Display this help message"

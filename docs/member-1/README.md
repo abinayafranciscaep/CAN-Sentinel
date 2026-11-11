@@ -3523,6 +3523,15 @@ brake_receiver: brake_receiver.c
 	$(CC) $(CFLAGS) -o $@ $<
 ```
 
+Additionally, dedicated make targets were introduced to eliminate manual CLI flag boilerplate while retaining full runtime override capabilities (`IFACE`, `SEED`, `DURATION`, `LOG`, `TIMEOUT`, and `ARGS`):
+
+| Target | Description | Default Command Invoked |
+| :--- | :--- | :--- |
+| `make run` | Single-threaded baseline simulator | `./ecu_simulator -i $(IFACE)` (defaults to `vcan0`) |
+| `make run-mt` | Multi-threaded distributed simulator | `./ecu_simulator -i $(IFACE) --threads` |
+| `make run-receiver` | Fail-safe brake actuator receiver | `./brake_receiver -i $(IFACE) -t $(TIMEOUT)` (timeout: 100 ms) |
+| `make dashboard` | Real-time Web EV Sport Dashboard | `python3 dashboard/bridge.py --interface $(IFACE) --port 8080` |
+
 #### Execution Commands:
 ```bash
 # 1. Compile all binaries
@@ -3531,11 +3540,15 @@ make clean && make
 # 2. Run automated payload unit tests (7/7 pass)
 make test
 
-# 3. Terminal 1: Launch Brake Actuator Receiver on vcan1 (or vcan0)
-./brake_receiver -i vcan1
+# 3. Terminal 1: Launch Brake Actuator Receiver (defaults to vcan0, or pass IFACE=vcan1)
+make run-receiver                 # Listens on vcan0 (100 ms timeout)
+make run-receiver IFACE=vcan1     # Listens on protected safety domain vcan1
 
-# 4. Terminal 2: Launch ECU Simulator targeting vcan1
-./ecu_simulator -i vcan1 --threads
+# 4. Terminal 2: Launch ECU Simulator (single-threaded baseline or multi-threaded)
+make run                          # Single-threaded baseline on vcan0
+make run SEED=42 DURATION=600     # Single-threaded reproducible 10-minute dataset
+make run-mt                       # Multi-threaded distributed architecture (6 pthreads)
+make run-mt IFACE=vcan1           # Multi-threaded targeting safety bus vcan1
 ```
 
 ---
