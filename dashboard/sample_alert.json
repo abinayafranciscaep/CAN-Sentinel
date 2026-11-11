@@ -1,0 +1,10 @@
+{
+  "timestamp": 1791300042.501223,
+  "attack_type": "spoof_brake",
+  "suspect_id": "0x0A0",
+  "confidence": 0.94,
+  "severity": "critical",
+  "affected_system": "brake",
+  "detection_layer": "ml",
+  "technique": "T0855"
+}

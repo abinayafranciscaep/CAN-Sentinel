@@ -12,7 +12,7 @@ RUN="${1:?Usage: bash dashboard/record_normal.sh <run_number> [seconds]}"
 SECS="${2:-600}"
 SIM="${SIM:-$ROOT/ecu_sim/ecu_simulator}"
 
-if [[ ! "$RUN" =~ ^[1-5]$ ]]; then
+if [[ ! "$RUN" =~ ^[1-3]$ ]]; then
     echo "ERROR: run number must be 1, 2, or 3."
     exit 1
 fi
